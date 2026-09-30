@@ -16,6 +16,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The Rust version is pinned, so that a new stable release, whose Clippy may add a lint, cannot turn
+# the workflows red on its own; raise it deliberately, after running the gate locally on the new
+# version. Cargo 1.90 or later is needed to package both crates together (release.yml).
+
 jobs:
   gate:
     name: Gate without DGGAL
@@ -25,8 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.98.1"
           components: rustfmt, clippy
       - name: Rust 1.85, the declared minimum, which the gate checks
         run: rustup toolchain install 1.85 --profile minimal

@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+# The Rust version is pinned, so that a new stable release, whose Clippy may add a lint, cannot turn
+# the workflows red on its own; raise it deliberately, after running the gate locally on the new
+# version. Cargo 1.90 or later is needed to package both crates together (release.yml).
+
 jobs:
   gate:
     name: Gate without DGGAL, and packages
@@ -30,8 +34,9 @@ jobs:
             echo "the tag $GITHUB_REF_NAME does not name the workspace version $version" >&2
             exit 1
           fi
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.98.1"
           components: rustfmt, clippy
       - name: Rust 1.85, the declared minimum, which the gate checks
         run: rustup toolchain install 1.85 --profile minimal
@@ -63,8 +68,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.98.1"
           targets: ${{ matrix.target }}
       - name: Build
         # The tool depends on the library alone, so DGGAL is not needed here.

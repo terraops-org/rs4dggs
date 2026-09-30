@@ -8,6 +8,18 @@ documentation cite, it also reproduces the operation order that DGGAL v0.0.6, as
 its own compiler settings, performs where that order departs from the order its eC source
 text spells.
 
+It is a modified work: in a few places it departs from DGGAL's answers on purpose (among
+them the aperture-3 sub-zone orders corrected at some rhombus-edge zones, four kinds of
+entry left out of the aperture-7 neighbour lists, and every zone's vertices given
+anticlockwise), each described under "Departures from the engine" in its README.
+
+rs4dggs contains no DGGAL source code and no DGGAL binary. DGGAL serves only as the oracle
+of its test suites, which link a separately installed copy; it is not distributed with
+these crates.
+
+Neither Ecere Corporation nor DGGAL's contributors endorse or promote rs4dggs; their names
+appear here only to credit the work it ports.
+
 DGGAL is distributed under the BSD 3-Clause Licence, reproduced below in full as it appears
 in its own distribution.
 
