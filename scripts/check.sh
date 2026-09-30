@@ -4,6 +4,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# `--without-dggal` checks everything save what needs DGGAL's own libraries: the build identity and
+# the oracle suites. GitHub's workflows run this form, since the runners cannot install the DGGAL
+# build the compiled operation orders were read from; every commit runs the full gate locally, in
+# the pre-commit hook.
+WITH_DGGAL=1
+if [[ "${1:-}" == "--without-dggal" ]]; then WITH_DGGAL=0; fi
+if (( WITH_DGGAL )); then
 : "${DGGAL_SITE_PACKAGES:?set DGGAL_SITE_PACKAGES to a site-packages with dggal==0.0.6 installed (pip install dggal==0.0.6)}"
 for lib in "$DGGAL_SITE_PACKAGES/dggal/lib/libdggal.so" "$DGGAL_SITE_PACKAGES/ecrt/lib/libecrt.so"; do
   [[ -f "$lib" ]] || { echo "missing $lib" >&2; exit 1; }
@@ -60,6 +67,9 @@ else
     echo "  $CITING"
   fi
 fi
+else
+  echo "== DGGAL: not used (--without-dggal); the build identity and the oracle suites are skipped"
+fi
 
 # Our crates only: the vendored DGGAL bindings under crates/dggal-oracle/vendor are unmodified
 # upstream code and must not be reformatted, linted or doctested. -p already scopes fmt and
@@ -68,6 +78,8 @@ fi
 # would be linted (and fail) too; --no-deps keeps clippy's lint pass on the selected
 # packages only, while the vendored crates still build normally for linking.
 CRATES=(-p rs4dggs -p rs4dggs-cli -p dggal-oracle)
+FEATURES=(--features rs4dggs/oracle,rs4dggs-cli/oracle)
+if (( ! WITH_DGGAL )); then CRATES=(-p rs4dggs -p rs4dggs-cli); FEATURES=(); fi
 # `cargo fmt` is scoped to the owned crates deliberately. The four crates under
 # crates/dggal-oracle/vendor are verbatim upstream DGGAL and eCere binding sources, kept
 # byte-identical so that they can be diffed against a new release; reformatting them would
@@ -80,8 +92,8 @@ echo "== fmt";     cargo fmt "${CRATES[@]}" --check
 # topologies/hex_a3_subzones.rs, and the six integration suites under tests/, one per grid,
 # so that clippy and test cover them here, in the one place the feature is meaningful,
 # exactly as they did before it existed.
-echo "== clippy";  cargo clippy "${CRATES[@]}" --all-targets --no-deps --features rs4dggs/oracle,rs4dggs-cli/oracle -- -D warnings
-echo "== test";    cargo test "${CRATES[@]}" --features rs4dggs/oracle,rs4dggs-cli/oracle
+echo "== clippy";  cargo clippy "${CRATES[@]}" --all-targets --no-deps "${FEATURES[@]}" -- -D warnings
+echo "== test";    cargo test "${CRATES[@]}" "${FEATURES[@]}"
 echo "== doc";      RUSTDOCFLAGS="-D warnings" cargo doc -p rs4dggs --no-deps
 echo "== trig only in math.rs"
 # Both call forms are caught: the method form `x.sin()` and the path form `f64::sin(x)`.

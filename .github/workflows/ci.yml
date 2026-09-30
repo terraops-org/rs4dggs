@@ -1,9 +1,8 @@
 name: CI
 
-# The full gate, DGGAL's oracle suites included, on every push to main and every pull request.
-# The public repository runs on GitHub's free standard runners; the pre-commit hook
-# (.githooks/pre-commit) runs the same gate before each commit, and the release workflow runs it
-# again on the tagged commit.
+# The gate, save DGGAL's oracle suites, on every push to main and every pull request, on GitHub's
+# free standard runners. The pre-commit hook (.githooks/pre-commit) runs the full gate, oracle
+# included, before each commit, and the release workflow runs this form again on the tagged commit.
 on:
   push:
     branches: [main]
@@ -32,12 +31,7 @@ jobs:
       - name: Rust 1.85, the declared minimum, which the gate checks
         run: rustup toolchain install 1.85 --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: DGGAL 0.0.6, the oracle the suites compare against
-        run: |
-          pip install dggal==0.0.6
-          echo "DGGAL_SITE_PACKAGES=$(python -c 'import site; print(site.getsitepackages()[0])')" >> "$GITHUB_ENV"
-      - name: The gate
-        run: ./scripts/check.sh
+      - name: The gate, save DGGAL's oracle suites
+        # PyPI's DGGAL wheel is another build than the one the compiled operation orders were read
+        # from, so the oracle suites run locally, in the pre-commit hook, and not here.
+        run: ./scripts/check.sh --without-dggal

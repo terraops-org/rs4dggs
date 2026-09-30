@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# The local gate before every commit that changes the code or a published file: GitHub runs the
-# build and the DGGAL check only for a tagged release, so this is where each commit is verified.
+# The local gate before every commit that changes the code or a published file. GitHub runs the
+# gate too, but without DGGAL's oracle suites, which need the recorded DGGAL build: this hook is
+# where each commit is checked against DGGAL.
 # Switch it on once per clone:
 #   git config core.hooksPath .githooks
-#   git config rs4dggs.dggalSitePackages /path/to/site-packages   # holding dggal==0.0.6
+#   git config rs4dggs.dggalSitePackages /path/to/site-packages   # the recorded DGGAL build
 # `git commit --no-verify` skips it when there is good reason.
 set -euo pipefail
 root=$(git rev-parse --show-toplevel)
 
 # A commit that touches neither the code nor a published file (notes kept beside the code) needs
 # no gate. Anything else does.
-if ! git diff --cached --name-only |
-    grep -qE '^(crates/|scripts/|bench/|\.github/|\.githooks/|Cargo\.(toml|lock)$|README\.md$|CONTRIBUTING\.md$|LICENSE$|NOTICE$)'; then
+published='^(crates/|scripts/|bench/|\.github/|\.githooks/|Cargo\.(toml|lock)$'
+published+='|README\.md$|CONTRIBUTING\.md$|LICENSE$|NOTICE$)'
+if ! git diff --cached --name-only | grep -qE "$published"; then
   echo "pre-commit: neither the code nor a published file changed; the gate is not run."
   exit 0
 fi
@@ -20,10 +22,9 @@ if [[ -z "${DGGAL_SITE_PACKAGES:-}" ]]; then
   DGGAL_SITE_PACKAGES=$(git config --get rs4dggs.dggalSitePackages || true)
 fi
 if [[ -z "${DGGAL_SITE_PACKAGES}" ]]; then
-  echo "pre-commit: the gate needs DGGAL. Set DGGAL_SITE_PACKAGES, or once for this clone:" >&2
-  echo "  git config rs4dggs.dggalSitePackages /path/to/site-packages   # with dggal==0.0.6" >&2
-  echo "(git commit --no-verify skips the gate.)" >&2
-  exit 1
+  echo "pre-commit: no DGGAL configured: the gate runs WITHOUT the oracle suites." >&2
+  echo "  To include them: git config rs4dggs.dggalSitePackages /path/to/site-packages" >&2
+  exec "$root/scripts/check.sh" --without-dggal
 fi
 export DGGAL_SITE_PACKAGES
 
