@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   gate:
-    name: Gate
+    name: Gate without DGGAL
     # The public repository alone: a private copy of these files is billed, and has its own
     # local gate.
     if: github.repository == 'terraops-org/rs4dggs'
@@ -31,7 +31,7 @@ jobs:
       - name: Rust 1.85, the declared minimum, which the gate checks
         run: rustup toolchain install 1.85 --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - name: The gate, save DGGAL's oracle suites
+      - name: scripts/check.sh --without-dggal
         # PyPI's DGGAL wheel is another build than the one the compiled operation orders were read
         # from, so the oracle suites run locally, in the pre-commit hook, and not here.
         run: ./scripts/check.sh --without-dggal

@@ -489,8 +489,8 @@ above.
   is kept for what the caller got wrong.
 - **Sub-zones cost what they list.** On the aperture-3 grids `sub_zone_at_index` pages through an
   order without building it, at any depth down to resolution 33, in a number of steps of the order
-  of 3^(d/2) at depth d; the crate's tests hold a single call at depth 33 below a zone of
-  resolution 0 under a second. `count_sub_zones` answers at any depth. `sub_zones` builds the
+  of 3^(d/2) at depth d; a single call at depth 33 below a zone of resolution 0 takes under a
+  tenth of a second in a release build. `count_sub_zones` answers at any depth. `sub_zones` builds the
   whole list and refuses one longer than `MAX_MATERIALISED_SUB_ZONES`, four million, with
   `Error::TooManySubZones`, which below a hexagon means any depth beyond 13. `sub_zone_index`
   searches the list that `sub_zones` builds, and is bound by the same limit: the index of a

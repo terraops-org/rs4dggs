@@ -1226,8 +1226,10 @@ mod tests {
     }
 
     /// `sub_zone_at_index` reaches resolution 33 from resolution 0, through the generators' own
-    /// index skip rather than by materialising 4.6e15 sub-zones, well within a second for the
-    /// first, the last and a middle index.
+    /// index skip rather than by materialising 4.6e15 sub-zones, for the first, the last and a
+    /// middle index. The slowest takes about 0.3 s unoptimised on a laptop and 1.1 s on a
+    /// shared CI runner running the other tests beside it; the bound of ten seconds still
+    /// separates the skip from the materialisation, which would never finish.
     #[test]
     fn sub_zone_at_index_reaches_depth_33_from_resolution_0_promptly() {
         let g = isea3h();
@@ -1239,7 +1241,7 @@ mod tests {
             let sub = g.sub_zone_at_index(z, 33, index).unwrap();
             let elapsed = start.elapsed();
             assert!(
-                elapsed < std::time::Duration::from_secs(1),
+                elapsed < std::time::Duration::from_secs(10),
                 "index {index} took {elapsed:?}"
             );
             assert_eq!(g.resolution(sub), 33);
