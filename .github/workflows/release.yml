@@ -1,0 +1,123 @@
+name: Release
+
+# Every commit is checked by the pre-commit hook (.githooks/pre-commit) and by ci.yml on push;
+# this workflow makes a release. Pushing a version tag (v0.1.0, matching the workspace version in
+# Cargo.toml) runs the full gate with DGGAL again on the tagged commit, packages both crates,
+# builds the command-line tool for Linux, macOS and Windows,
+# and publishes a GitHub Release with every file and its SHA-256 checksum. A manual run does the
+# same without creating a release, and leaves the files as workflow artifacts.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Gate and packages
+    # Releases are made from the public repository alone; the private one never runs this.
+    if: github.repository == 'terraops-org/rs4dggs'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag names the workspace version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "the tag $GITHUB_REF_NAME does not name the workspace version $version" >&2
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Rust 1.85, the declared minimum, which the gate checks
+        run: rustup toolchain install 1.85 --profile minimal
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: DGGAL 0.0.6, the oracle the suites compare against
+        run: |
+          pip install dggal==0.0.6
+          echo "DGGAL_SITE_PACKAGES=$(python -c 'import site; print(site.getsitepackages()[0])')" >> "$GITHUB_ENV"
+      - name: The gate
+        run: ./scripts/check.sh
+      - name: Both crates packaged
+        # Packaged together, so that the tool is verified against the library packaged beside it
+        # before the library is on crates.io.
+        run: cargo package -p rs4dggs -p rs4dggs-cli --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crates
+          path: target/package/*.crate
+          if-no-files-found: error
+
+  binaries:
+    name: rs4dggs for ${{ matrix.target }}
+    needs: gate
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build
+        # The tool depends on the library alone, so DGGAL is not needed here.
+        run: cargo build --release --locked -p rs4dggs-cli --target ${{ matrix.target }}
+      - name: Archive
+        shell: bash
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          name="rs4dggs-$version-${{ matrix.target }}"
+          mkdir "$name"
+          cp crates/rs4dggs-cli/README.md LICENSE crates/rs4dggs-cli/NOTICE "$name/"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp "target/${{ matrix.target }}/release/rs4dggs.exe" "$name/"
+            7z a "$name.zip" "$name" > /dev/null
+          else
+            cp "target/${{ matrix.target }}/release/rs4dggs" "$name/"
+            tar -czf "$name.tar.gz" "$name"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: |
+            rs4dggs-*.tar.gz
+            rs4dggs-*.zip
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [gate, binaries]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "rs4dggs $GITHUB_REF_NAME" \
+            --generate-notes

@@ -19,9 +19,9 @@ edition = "2024"
 # Applies to rs4dggs, the published crate, alone: it builds on 1.85. The test-only
 # oracle (crates/dggal-oracle, never published) does not: its vendored ecrt calls
 # u64::cast_signed/i64::cast_unsigned, gated behind integer_sign_cast, stable from
-# Rust 1.87. See .github/workflows/check.yml and scripts/check.sh, which check each
-# claim on its own toolchain rather than raising this one to cover a dependency
-# nobody who consumes the crate ever compiles.
+# Rust 1.87. See scripts/check.sh (which .github/workflows/release.yml runs), which
+# checks each claim on its own toolchain rather than raising this one to cover a
+# dependency nobody who consumes the crate ever compiles.
 rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/terraops-org/rs4dggs"
