@@ -1,0 +1,8 @@
+# Rust build output
+target/
+**/target/
+
+# Python (local tooling, oracle scripts)
+__pycache__/
+*.pyc
+.venv/

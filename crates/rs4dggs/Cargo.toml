@@ -1,0 +1,59 @@
+[package]
+name = "rs4dggs"
+description = "Pure Rust port of py4dggs: DGGAL's discrete global grid systems IGEO7, IVEA7H, RTEA7H, ISEA3H, IVEA3H and RTEA3H"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["dggs", "dggal", "geospatial", "gis", "hexagonal"]
+categories = ["science::geo", "algorithms", "mathematics"]
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+dggal-oracle = { path = "../dggal-oracle" }
+
+# Meaningful only within this repository. `cargo package` strips a dev-dependency that
+# names only a path and no registry version, so `dggal-oracle` itself does not survive
+# extraction: no feature can bring back a dependency the manifest no longer declares.
+# What this feature gates is compilation, not linking: with it off, nothing that names
+# `dggal_oracle` is even attempted, so `cargo test` succeeds in the extracted package
+# with no network and no DGGAL. With it on, in this repository, the oracle suites run.
+[features]
+oracle = []
+
+[[test]]
+name = "oracle_igeo7"
+path = "tests/oracle_igeo7.rs"
+required-features = ["oracle"]
+
+[[test]]
+name = "oracle_ivea7h"
+path = "tests/oracle_ivea7h.rs"
+required-features = ["oracle"]
+
+[[test]]
+name = "oracle_rtea7h"
+path = "tests/oracle_rtea7h.rs"
+required-features = ["oracle"]
+
+[[test]]
+name = "oracle_isea3h"
+path = "tests/oracle_isea3h.rs"
+required-features = ["oracle"]
+
+[[test]]
+name = "oracle_ivea3h"
+path = "tests/oracle_ivea3h.rs"
+required-features = ["oracle"]
+
+[[test]]
+name = "oracle_rtea3h"
+path = "tests/oracle_rtea3h.rs"
+required-features = ["oracle"]

@@ -1,0 +1,17 @@
+[package]
+name = "dggal"
+version = "0.0.6"
+edition = "2021"
+publish = false
+
+[lib]
+name = "dggal"
+path = "src/lib.rs"
+
+[lints.rust]
+warnings = "allow"
+
+[dependencies]
+ecrt-sys = { path = "../ecrt-sys" }
+ecrt = { path = "../ecrt" }
+dggal-sys = { path = "../dggal-sys" }

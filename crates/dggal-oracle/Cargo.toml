@@ -1,0 +1,19 @@
+[package]
+name = "dggal-oracle"
+description = "Test-only live oracle: DGGAL v0.0.6 through its own Rust bindings. Never a dependency of a published crate."
+version = "0.0.6"
+edition = "2021"
+publish = false
+license = "BSD-3-Clause"
+
+[lints.rust]
+# No unsafe in this crate's own code: every DGGAL call is confined to one worker thread
+# (see src/lib.rs), so no `unsafe impl Send` or similar escape hatch is needed. Forbidding
+# it here makes that an enforced invariant, not just a fact true today.
+unsafe_code = "forbid"
+
+[dependencies]
+ecrt = { path = "vendor/ecrt" }
+ecrt-sys = { path = "vendor/ecrt-sys" }
+dggal = { path = "vendor/dggal" }
+dggal-sys = { path = "vendor/dggal-sys" }

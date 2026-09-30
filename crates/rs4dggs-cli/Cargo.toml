@@ -1,0 +1,35 @@
+[package]
+name = "rs4dggs-cli"
+description = "A command-line tool over rs4dggs: DGGAL's discrete global grids IGEO7, IVEA7H, RTEA7H, ISEA3H, IVEA3H and RTEA3H"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["dggs", "dggal", "geospatial", "gis", "cli"]
+categories = ["command-line-utilities", "science::geo"]
+
+[lints]
+workspace = true
+
+[lib]
+name = "rs4dggs_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rs4dggs"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+rs4dggs = { path = "../rs4dggs", version = "0.1.0" }
+
+[features]
+# Compiles the tests that compare the tool with DGGAL's own `dgg`; nothing else.
+oracle = []
+
+[[test]]
+name = "oracle_dgg"
+required-features = ["oracle"]

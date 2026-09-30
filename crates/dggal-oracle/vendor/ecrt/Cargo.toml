@@ -1,0 +1,15 @@
+[package]
+name = "ecrt"
+version = "0.0.6"
+edition = "2021"
+publish = false
+
+[lib]
+name = "ecrt"
+path = "src/lib.rs"
+
+[lints.rust]
+warnings = "allow"
+
+[dependencies]
+ecrt-sys = { path = "../ecrt-sys" }

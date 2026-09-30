@@ -1,0 +1,16 @@
+[package]
+name = "ecrt-sys"
+version = "0.0.6"
+edition = "2021"
+publish = false
+build = "build.rs"
+
+[lib]
+name = "ecrt_sys"
+path = "src/lib.rs"
+
+[lints.rust]
+warnings = "allow"
+
+[build-dependencies]
+cc = "1"

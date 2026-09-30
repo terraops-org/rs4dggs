@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/rs4dggs",
+  "crates/rs4dggs-cli",
+  "crates/dggal-oracle",
+  "crates/dggal-oracle/vendor/ecrt-sys",
+  "crates/dggal-oracle/vendor/ecrt",
+  "crates/dggal-oracle/vendor/dggal-sys",
+  "crates/dggal-oracle/vendor/dggal",
+]
+# A bare `cargo test`, `cargo doc` or `cargo run --example` works on the library and the tool,
+# neither of which needs DGGAL; the gate names the crates it checks explicitly with -p.
+default-members = ["crates/rs4dggs", "crates/rs4dggs-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Applies to rs4dggs, the published crate, alone: it builds on 1.85. The test-only
+# oracle (crates/dggal-oracle, never published) does not: its vendored ecrt calls
+# u64::cast_signed/i64::cast_unsigned, gated behind integer_sign_cast, stable from
+# Rust 1.87. See .github/workflows/check.yml and scripts/check.sh, which check each
+# claim on its own toolchain rather than raising this one to cover a dependency
+# nobody who consumes the crate ever compiles.
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/terraops-org/rs4dggs"
+authors = ["Jorge S. Mendes de Jesus"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+float_cmp = "allow"            # faithful ports compare floats exactly on purpose
+excessive_precision = "allow"  # eC constants are copied verbatim
+many_single_char_names = "allow"
+too_many_arguments = "allow"
