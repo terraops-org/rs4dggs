@@ -1530,8 +1530,10 @@ fn fix_poles(geom: &IcoGeometry, vx: f64, vy: f64, odd_grid: bool) -> Option<(f6
 /// grids use, the two orders give the same doubles.
 // The first two edge-wrap branches below do share a body; they are kept apart because
 // the eC writes them apart, and collapsing them would hide that the third branch, which
-// py4dggs drops, sits between the second and the rest of the chain.
-#[allow(clippy::if_same_then_else)]
+// py4dggs drops, sits between the second and the rest of the chain. The fourth branch tests
+// the first's condition again (`vy < 0 && vx < 0`), so it is never taken; it stays because the
+// eC writes it there (ri5x6.ec:516-531), and Clippy's `ifs_same_cond` is allowed for that reason.
+#[allow(clippy::if_same_then_else, clippy::ifs_same_cond)]
 pub(crate) fn inverse(geom: &IcoGeometry, p: PlanarPoint, odd_grid: bool) -> GeoPoint {
     let mut vx = p.x;
     let mut vy = p.y;
