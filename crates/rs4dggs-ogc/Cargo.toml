@@ -15,7 +15,7 @@ categories = ["science::geo", "encoding"]
 workspace = true
 
 [dependencies]
-rs4dggs = { path = "../rs4dggs", version = "0.1.0" }
+rs4dggs = { path = "../rs4dggs", version = "0.2.0" }
 
 [features]
 # Compiles the tests that compare the encodings with DGGAL's own `dgg`; nothing else.

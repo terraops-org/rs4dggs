@@ -61,14 +61,14 @@ checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
 
 [[package]]
 name = "rs4dggs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dggal-oracle",
 ]
 
 [[package]]
 name = "rs4dggs-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rs4dggs",
  "rs4dggs-ogc",
@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "rs4dggs-ogc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rs4dggs",
 ]

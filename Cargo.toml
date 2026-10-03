@@ -15,7 +15,7 @@ members = [
 default-members = ["crates/rs4dggs", "crates/rs4dggs-cli", "crates/rs4dggs-ogc"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # Applies to rs4dggs, the published crate, alone: it builds on 1.85. The test-only
 # oracle (crates/dggal-oracle, never published) does not: its vendored ecrt calls
