@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme = "README.md"
+autotests = false
 keywords = ["dggs", "dggal", "geospatial", "gis", "hexagonal"]
 categories = ["science::geo", "algorithms", "mathematics"]
 
@@ -33,32 +34,8 @@ name = "oracle_boxes"
 path = "tests/oracle_boxes.rs"
 required-features = ["oracle"]
 
+# The other suites are modules of the library's own tests (see `src/lib.rs`): they ask the
+# crate's own trait methods, which no code outside the crate can reach.
 [[test]]
-name = "oracle_igeo7"
-path = "tests/oracle_igeo7.rs"
-required-features = ["oracle"]
-
-[[test]]
-name = "oracle_ivea7h"
-path = "tests/oracle_ivea7h.rs"
-required-features = ["oracle"]
-
-[[test]]
-name = "oracle_rtea7h"
-path = "tests/oracle_rtea7h.rs"
-required-features = ["oracle"]
-
-[[test]]
-name = "oracle_isea3h"
-path = "tests/oracle_isea3h.rs"
-required-features = ["oracle"]
-
-[[test]]
-name = "oracle_ivea3h"
-path = "tests/oracle_ivea3h.rs"
-required-features = ["oracle"]
-
-[[test]]
-name = "oracle_rtea3h"
-path = "tests/oracle_rtea3h.rs"
-required-features = ["oracle"]
+name = "estimate_zones_in_box"
+path = "tests/estimate_zones_in_box.rs"

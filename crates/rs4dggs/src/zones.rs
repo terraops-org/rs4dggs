@@ -322,7 +322,7 @@ fn plain(a: &[f64; 4], b: &[f64; 4]) -> bool {
 /// south not above the north; longitudes between -180 and 180, the west above the east
 /// meaning a box that runs eastwards over the antimeridian. A box of no width or no height, or
 /// of a single point, is a box; so is the whole world. Anything else is refused with the error
-/// that names the offending value.
+/// that names the coordinate at fault.
 pub(crate) fn box_radians(bbox: &Extent) -> Result<[f64; 4]> {
     let (south, west, north, east) = (bbox.ll.lat, bbox.ll.lon, bbox.ur.lat, bbox.ur.lon);
     for (name, value) in [
@@ -335,25 +335,18 @@ pub(crate) fn box_radians(bbox: &Extent) -> Result<[f64; 4]> {
             return Err(Error::NonFinite { name });
         }
     }
-    for lat in [south, north] {
+    for (name, lat) in [("south", south), ("north", north)] {
         if !(-90.0..=90.0).contains(&lat) {
-            return Err(Error::LatitudeOutOfRange {
-                bits: lat.to_bits(),
-            });
+            return Err(Error::LatitudeOutOfRange { name });
         }
     }
-    for lon in [west, east] {
+    for (name, lon) in [("west", west), ("east", east)] {
         if !(-180.0..=180.0).contains(&lon) {
-            return Err(Error::LongitudeOutOfRange {
-                bits: lon.to_bits(),
-            });
+            return Err(Error::LongitudeOutOfRange { name });
         }
     }
     if south > north {
-        return Err(Error::InvertedBox {
-            south_bits: south.to_bits(),
-            north_bits: north.to_bits(),
-        });
+        return Err(Error::InvertedBox);
     }
     Ok([south, west, north, east].map(math::radians))
 }
@@ -960,6 +953,7 @@ fn share_in_zones(share: f64, zones: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interfaces::sealed::Private;
     use crate::types::GeoPoint;
 
     fn bits(b: [u64; 4]) -> [f64; 4] {
@@ -1158,15 +1152,11 @@ mod tests {
     fn a_latitude_beyond_a_pole_is_refused() {
         assert_eq!(
             box_radians(&degrees(-90.000001, 0.0, 10.0, 10.0)),
-            Err(Error::LatitudeOutOfRange {
-                bits: (-90.000001f64).to_bits()
-            })
+            Err(Error::LatitudeOutOfRange { name: "south" })
         );
         assert_eq!(
             box_radians(&degrees(80.0, 0.0, 100.0, 10.0)),
-            Err(Error::LatitudeOutOfRange {
-                bits: 100.0f64.to_bits()
-            })
+            Err(Error::LatitudeOutOfRange { name: "north" })
         );
     }
 
@@ -1174,10 +1164,7 @@ mod tests {
     fn a_south_above_the_north_is_refused() {
         assert_eq!(
             box_radians(&degrees(40.0, 10.0, 30.0, 20.0)),
-            Err(Error::InvertedBox {
-                south_bits: 40.0f64.to_bits(),
-                north_bits: 30.0f64.to_bits()
-            })
+            Err(Error::InvertedBox)
         );
     }
 
@@ -1186,16 +1173,14 @@ mod tests {
         // With the west below the east, and with it above: the engine answers the first and
         // overflows its stack on the second.
         for (w, e, bad) in [
-            (170.0, 181.0, 181.0),
-            (-190.0, -170.0, -190.0),
-            (170.0, -181.0, -181.0),
-            (181.0, 170.0, 181.0),
+            (170.0, 181.0, "east"),
+            (-190.0, -170.0, "west"),
+            (170.0, -181.0, "east"),
+            (181.0, 170.0, "west"),
         ] {
             assert_eq!(
                 box_radians(&degrees(10.0, w, 20.0, e)),
-                Err(Error::LongitudeOutOfRange {
-                    bits: f64::to_bits(bad)
-                })
+                Err(Error::LongitudeOutOfRange { name: bad })
             );
         }
     }
@@ -1562,7 +1547,7 @@ mod tests {
             return g.zones(level).unwrap().collect();
         }
         let mut zones = Vec::new();
-        for (root, row, col) in sampled_cells(T::lattice_edge(level), rng) {
+        for (root, row, col) in sampled_cells(T::lattice_edge(Private, level), rng) {
             zones.extend(g.lattice_cell(level, root, row, col));
         }
         for root in [10, 11] {
@@ -1615,7 +1600,7 @@ mod tests {
         let (mut widths, mut excess, mut sides, mut count) = (0.0_f64, f64::MIN, 0.0_f64, 0);
         for level in levels {
             let width = math::sqrt(4.0 * PI / g.count_zones(level).unwrap() as f64);
-            let edge = T::lattice_edge(level) as f64;
+            let edge = T::lattice_edge(Private, level) as f64;
             let side = net_length(1.0 / edge, 0.0);
             for zone in measured_zones(g, level, level <= whole_to, &mut rng) {
                 let centre = g.centroid(zone);
@@ -1628,7 +1613,7 @@ mod tests {
                     .fold(0.0, f64::max);
                 widths = widths.max(r / width);
                 excess = excess.max(r - radius * width);
-                let (root, row, col, _) = T::locate(&I::decode(zone)).unwrap();
+                let (root, row, col, _) = T::locate(Private, &I::decode(zone)).unwrap();
                 if root < 10 {
                     let x = f64::from(root / 2) + col as f64 / edge;
                     let y = f64::from(root.div_ceil(2)) + row as f64 / edge;

@@ -3,6 +3,7 @@
 //!
 //! What needs no engine is tested in every build; the comparison with the engine's own list of
 //! the whole world is in the module `engine`, under the `oracle` feature.
+use crate::interfaces::sealed::Private;
 use rs4dggs::indexings::{I3h, Z7};
 use rs4dggs::topologies::{HexA3, HexA7};
 use rs4dggs::{Address, AnyGrid, Error, Grid, Indexing, Projection, Topology, ZoneId};
@@ -50,14 +51,14 @@ fn from_the_lattice<T: Topology, I: Indexing>(
     (root, row, col): (u8, u64, u64),
     cells: usize,
 ) -> Vec<(ZoneId, u64)> {
-    let edge = T::lattice_edge(level);
+    let edge = T::lattice_edge(Private, level);
     let mut out = Vec::new();
     let (mut root, mut row, mut col) = (root, row, col);
     for _ in 0..cells {
         if root > 9 {
             break;
         }
-        out.extend(T::cell_zones(level, root, row, col));
+        out.extend(T::cell_zones(Private, level, root, row, col));
         col += 1;
         if col == edge {
             (row, col) = (row + 1, 0);
@@ -67,8 +68,8 @@ fn from_the_lattice<T: Topology, I: Indexing>(
         }
     }
     if root > 9 {
-        out.extend(T::polar_zones(level, 10));
-        out.extend(T::polar_zones(level, 11));
+        out.extend(T::polar_zones(Private, level, 10));
+        out.extend(T::polar_zones(Private, level, 11));
     }
     out.into_iter()
         .map(|(a, key)| (I::encode(&a), key))
@@ -77,7 +78,7 @@ fn from_the_lattice<T: Topology, I: Indexing>(
 
 /// The key of a zone in the order of its level, as the lattice gives it.
 fn key<T: Topology, I: Indexing>(zone: ZoneId) -> u64 {
-    T::locate(&I::decode(zone))
+    T::locate(Private, &I::decode(zone))
         .unwrap_or_else(|| panic!("{:#018x} is no zone of the lattice", zone.0))
         .3
 }
@@ -473,7 +474,7 @@ fn an_identifier_that_the_lattice_does_not_hold_is_refused() {
 fn the_finest_level_is_walked_from_any_place<T: Topology, I: Indexing>(name: &str, level: u8) {
     let g = grid(name);
     assert_eq!(level, g.max_box_level());
-    let edge = T::lattice_edge(level);
+    let edge = T::lattice_edge(Private, level);
     assert!(edge > 2_000);
 
     let first: Vec<ZoneId> = g.zones(level).unwrap().take(1_000).collect();
@@ -491,7 +492,10 @@ fn the_finest_level_is_walked_from_any_place<T: Topology, I: Indexing>(name: &st
         ((9, last, last - 100), 101, true),
     ] {
         let hosted = from_the_lattice::<T, I>(level, place, cells);
-        for at in [0, T::cell_zones(level, place.0, place.1, place.2).len() - 1] {
+        for at in [
+            0,
+            T::cell_zones(Private, level, place.0, place.1, place.2).len() - 1,
+        ] {
             let (cursor, cursor_key) = hosted[at];
             let page: Vec<ZoneId> = g
                 .zones(level)
@@ -550,7 +554,7 @@ fn the_level_above_the_finest_is_walked_from_the_middle_of_a_rhombus() {
 
 fn the_middle_of_a_rhombus<T: Topology, I: Indexing>(name: &str, level: u8) {
     let g = grid(name);
-    let edge = T::lattice_edge(level);
+    let edge = T::lattice_edge(Private, level);
     let hosted = from_the_lattice::<T, I>(level, (7, edge / 2, edge / 3), 1_003);
     for at in [0, 1, 2] {
         let page: Vec<ZoneId> = g

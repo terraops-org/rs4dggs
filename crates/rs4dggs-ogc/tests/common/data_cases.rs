@@ -15,66 +15,44 @@ pub fn each(mut f: impl FnMut(&str, &ZoneData<'_>)) {
     let mut null_at_2 = seven.clone();
     null_at_2[2] = None;
     let thirteen = positions(13);
-    fn data<'a>(
-        dggrs: &'static Dggrs,
-        zone: rs4dggs::ZoneId,
-        depths: &'a [u8],
-        properties: &'a [Property<'a>],
-    ) -> ZoneData<'a> {
-        ZoneData {
-            dggrs,
-            zone,
-            depths,
-            properties,
-        }
-    }
 
     f(
         "data-ISEA3H-C2-23-C-depth1.json",
-        &data(
+        &ZoneData::new(
             isea3h,
             c2,
             &[1],
-            &[Property {
-                name: "i",
-                depths: &[Values::I32(&seven)],
-            }],
+            &[Property::new("i", &[Values::I32(&seven)])],
         ),
     );
     f(
         "data-ISEA3H-C2-23-C-depth1.null-at-2.json",
-        &data(
+        &ZoneData::new(
             isea3h,
             c2,
             &[1],
-            &[Property {
-                name: "i",
-                depths: &[Values::I32(&null_at_2)],
-            }],
+            &[Property::new("i", &[Values::I32(&null_at_2)])],
         ),
     );
     f(
         "data-ISEA3H-C2-23-C-depths1-2.json",
-        &data(
+        &ZoneData::new(
             isea3h,
             c2,
             &[1, 2],
-            &[Property {
-                name: "i",
-                depths: &[Values::I32(&seven), Values::I32(&thirteen)],
-            }],
+            &[Property::new(
+                "i",
+                &[Values::I32(&seven), Values::I32(&thirteen)],
+            )],
         ),
     );
     f(
         "data-ISEA3H-C2-23-C-depth0.json",
-        &data(
+        &ZoneData::new(
             isea3h,
             c2,
             &[0],
-            &[Property {
-                name: "i",
-                depths: &[Values::U16(&[Some(1000)])],
-            }],
+            &[Property::new("i", &[Values::U16(&[Some(1000)])])],
         ),
     );
     let t = [
@@ -88,15 +66,7 @@ pub fn each(mut f: impl FnMut(&str, &ZoneData<'_>)) {
     ];
     f(
         "data-ISEA3H-C2-23-C-depth1.f32.json",
-        &data(
-            isea3h,
-            c2,
-            &[1],
-            &[Property {
-                name: "t",
-                depths: &[Values::F32(&t)],
-            }],
-        ),
+        &ZoneData::new(isea3h, c2, &[1], &[Property::new("t", &[Values::F32(&t)])]),
     );
     let class = [
         Some(0),
@@ -118,19 +88,13 @@ pub fn each(mut f: impl FnMut(&str, &ZoneData<'_>)) {
     ];
     f(
         "data-ISEA3H-C2-23-C-depth1.two-bands.json",
-        &data(
+        &ZoneData::new(
             isea3h,
             c2,
             &[1],
             &[
-                Property {
-                    name: "class",
-                    depths: &[Values::U8(&class)],
-                },
-                Property {
-                    name: "height",
-                    depths: &[Values::F64(&height)],
-                },
+                Property::new("class", &[Values::U8(&class)]),
+                Property::new("height", &[Values::F64(&height)]),
             ],
         ),
     );
@@ -138,14 +102,11 @@ pub fn each(mut f: impl FnMut(&str, &ZoneData<'_>)) {
     let fifty_five = positions(55);
     f(
         "data-ISEA7H_Z7-0064-depth2.json",
-        &data(
+        &ZoneData::new(
             z7,
             z0064,
             &[2],
-            &[Property {
-                name: "i",
-                depths: &[Values::I32(&fifty_five)],
-            }],
+            &[Property::new("i", &[Values::I32(&fifty_five)])],
         ),
     );
     // At this zone, on a broken seam, two entries of the order are the null zone: no zone, and
@@ -161,14 +122,11 @@ pub fn each(mut f: impl FnMut(&str, &ZoneData<'_>)) {
         .collect();
     f(
         "data-ISEA7H_Z7-00055353260226021-depth1.seam.json",
-        &data(
+        &ZoneData::new(
             z7,
             seam,
             &[1],
-            &[Property {
-                name: "i",
-                depths: &[Values::I32(&at_seam)],
-            }],
+            &[Property::new("i", &[Values::I32(&at_seam)])],
         ),
     );
 }

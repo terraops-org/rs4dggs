@@ -185,12 +185,16 @@
 //!   process ([`engine_first_sub_zone_ends_the_process`]): the call is not made there, and
 //!   the orders it is kept from are counted;
 //! - the index of a sub-zone is the engine's `getSubZoneIndex` wherever the order holds the
-//!   zone at that index, and none otherwise. At the broken seams the engine's walk, which
-//!   compares centroids, answers for some zones an index at which its own order names
-//!   another zone; such a zone has no index here, and each is counted by level. Where the
-//!   engine answers -1 for a zone that its order names, there is none here either, and
-//!   those are counted too. The index is not sought in an order longer than a list may be,
-//!   where the engine walks an order of any length; the suites ask none so long.
+//!   zone at that index, and otherwise, where the engine's own test of a sub-zone accepts the
+//!   zone, its first place in the order, found in the order itself, or none where the order
+//!   does not hold it. At the broken seams the engine's walk, which compares centroids,
+//!   answers for some zones an index at which its own order names another zone, and -1 for
+//!   some zones that its order names; each such entry that the test accepts has its first
+//!   place as its index here, and each that it refuses has none, as in the engine; each is
+//!   counted by level. Below an identifier that is not the zone found at its own centroid the
+//!   test refuses every entry, which has no index here either. The index is not sought in an
+//!   order longer than a list may be, where the engine walks an order of any length; the
+//!   suites ask none so long.
 //!
 //! No order longer than [`LONGEST_ORDER_ASKED`] is asked of the engine, which ends the
 //! process at `2^28` sub-zones on these grids.

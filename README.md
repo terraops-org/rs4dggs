@@ -306,11 +306,11 @@ it is unset. The methods added since 0.1.0, which change no earlier answer, are 
 boundary, the extent, the area and the facts of a grid, and the enumerations of the zones of a
 level and of a box, the estimate and the compaction, all named under Status. With the last come
 two iterators, `Zones` and `ZonesInBox`, and four variants of `Error`, which stays
-`#[non_exhaustive]`: `LatitudeOutOfRange`, `LongitudeOutOfRange` and `InvertedBox` refuse a
-bounding box that is none, and carry the offending latitude or longitude as the bits of its
-`f64`, which `f64::from_bits` reads back, so that `Error` keeps `Eq`; `MixedLevels` refuses a set
-of more than one level given to `compact_zones`. `NonFinite` now also names the coordinate of a
-box at fault, `"south"`, `"west"`, `"north"` or `"east"`, and `ResolutionOutOfRange` answers a
+`#[non_exhaustive]`: `LatitudeOutOfRange` and `LongitudeOutOfRange` refuse a bounding box with a
+coordinate out of range and name that coordinate, `"south"`, `"west"`, `"north"` or `"east"`, as
+`NonFinite` does, and `InvertedBox`, which carries nothing, refuses a box whose south lies above
+its north; `MixedLevels` refuses a set of more than one level given to `compact_zones`.
+`NonFinite` now also names the coordinate of a box at fault, `"south"`, `"west"`, `"north"` or `"east"`, and `ResolutionOutOfRange` answers a
 level beyond `max_box_level` with that limit as its `max`. The command-line tool follows the
 library, and its own README lists what that changes in what it prints.
 
@@ -708,17 +708,26 @@ says so.
   The suite does not make the engine's call at such a pair: nine on each grid, at the
   resolutions 1 to 17, counted exactly, at each of which this crate's answer is compared with
   the first entry of the engine's list.
-- **The index of a sub-zone on the aperture-7 grids is confirmed, and bounded.** `sub_zone_index`
-  finds an index as the engine's `getSubZoneIndex` does, by the engine's test of whether the zone
-  is a sub-zone and its walk of the order's centroids, and answers `Some(i)` only where
-  `sub_zone_at_index` at `i` gives back the zone asked about. At the two broken edges the engine
-  answers, for some zones, an index at which its own order holds another zone, and this crate
-  answers `None`: 421, 395 and 433 times in the suites' samples on IGEO7, IVEA7H and RTEA7H, all
-  among sub-zones of resolutions 16 and 18. Re-checked by the suite, which at every such
-  disagreement finds another zone at the engine's index in the engine's own order. The walk
-  costs as the index does, so the request is refused with `Error::TooManySubZones` where the
-  order is longer than the limit on a list, which the engine does not do: it walks an order of
-  any length.
+- **The index of a sub-zone on the aperture-7 grids is confirmed, found where the engine's test
+  accepts the zone, and bounded.** `sub_zone_index` finds an index as the engine's `getSubZoneIndex`
+  does, by the engine's test of whether the zone is a sub-zone and its walk of the order's
+  centroids, and answers it where `sub_zone_at_index` at that index gives back the zone asked about.
+  Where the test accepts the zone and the walk gives no such index, the zone is sought in the order
+  itself, generated entry by entry and never built, and its first place there is the index, or
+  `None` where the order does not hold it. Where the test refuses the zone the answer is `None` at
+  once, as the engine's -1. The engine's walk fails at the two broken edges, among sub-zones of
+  resolution 15 and finer. There it answers, for some entries of its own order that its test
+  accepts, -1, and for some an index at which its order holds another zone: in the suites' samples,
+  59, 67 and 63 entries of the first kind on IGEO7, IVEA7H and RTEA7H, and 403, 379 and 411 of the
+  second, each of which has its place here. Entries that the test refuses have no index, here as in
+  the engine: 64, 108 and 70 in the main samples and 2,988 among the identifiers built by text, all
+  of resolutions 15 to 19. And 18, 16 and 22 times the engine answers an index for a zone that the
+  order does not hold, which has none here. Where an order names a zone twice, the index is the
+  place that the walk finds, if it finds one, and the first place otherwise. Re-checked by the
+  suite, which at every such entry compares the engine's answer and its test, and finds the zone at
+  the place answered. The walk costs as the index does, and the search in the order more, so the
+  request is refused with `Error::TooManySubZones` where the order is longer than the limit on a
+  list, which the engine does not do: it walks an order of any length.
 - **A walk of the aperture-7 sub-zone generator that does not end is given up.** The engine
   steps from one centroid of an order to the next across the interruptions of its layout by a
   function whose loop has no bound, and from some arguments it does not return. This crate gives
@@ -920,7 +929,8 @@ says so.
 - **A bounding box that is none is refused, before any work.** `zones_in_box` and
   `estimate_zones_in_box` return `Error::NonFinite` for a coordinate that is not finite,
   `Error::LatitudeOutOfRange` for a latitude beyond a pole, `Error::LongitudeOutOfRange` for a
-  longitude outside -180 to 180 degrees, and `Error::InvertedBox` for a south above the north.
+  longitude outside -180 to 180 degrees, each naming the coordinate at fault, and
+  `Error::InvertedBox` for a south above the north.
   The engine answers such a box with something, with an empty list or with a null array; on the
   aperture-3 grids it does not return from a box with an infinite latitude; and on both
   apertures it overflows its stack on a box over the antimeridian with a longitude beyond 180
@@ -1109,7 +1119,10 @@ above.
   the aperture-7 grids it builds no list: it walks the centroids of the order from its head, so
   that its cost grows with the index, some 12 milliseconds to the middle of the 825,259
   sub-zones of a hexagon at depth 7 in a release build and twice that to the last, and
-  microseconds for a zone that is no sub-zone. The limit in force is
+  microseconds for a zone that is no sub-zone. Where the engine's test accepts a zone that the
+  walk does not find, the order itself is searched, at some 3.7 microseconds an entry in a release
+  build, since each entry is quantised: up to 3 seconds through an order at depth 7, the longest
+  within the limit. The limit in force is
   `rs4dggs::grid::max_materialised_sub_zones()`, which the error carries: the environment
   variable `RS4DGGS_MAX_MATERIALISED_SUB_ZONES` lowers it from four million and never raises it,
   for an operator who must bound what a caller can ask, on every grid. It is read as
@@ -1252,7 +1265,10 @@ above.
   `AnyGrid` returns an error rather than panicking. The traits `Projection`, `Topology` and
   `Indexing`, which are sealed, and the implementations of them this crate ships are its own parts
   made visible so that a caller can compose a grid from them; the contract does not extend to
-  them, and their documentation states what each expects. Where one of them answers differently
+  them, and their documentation states what each expects. The methods that `Grid` asks of its
+  parts for itself alone, such as the compaction of a topology, the walk of the lattice in which
+  it enumerates the zones of a level, or the inverse of a projection in radians, are not reachable
+  from outside the crate. Where one of them answers differently
   from a DGGAL accessor of similar name, as `Topology::planar_centroid` does from
   `getZoneCRSCentroid`, its documentation says so.
 
@@ -1351,11 +1367,15 @@ above.
     and its `getZoneChildren` part at some zones of those edges, among sub-zones of resolutions
     16 and 18: at 5, 3 and 3 hexagons of the main sample and at 57 of the identifiers built by
     text. The order of `0000000000000001644` holds thirteen zones, and its children are four.
-  - **The index of a sub-zone.** An entry of an order at those edges may have no index: the
-    engine's `getSubZoneIndex` answers -1 for it and this crate `None`, at 28, 80 and 38 of the
-    entries asked below hexagons of the main sample, 82 below the pentagons and 3,001 below the
-    identifiers built by text. Of the order of `0000000000000005` at depth 1, the entries at 4
-    and 9 have none. Where an order names a zone twice, its index is one of its places.
+  - **The index of a sub-zone.** The engine's `getSubZoneIndex` answers -1 for some entries of an
+    order at those edges. Where its own test of a sub-zone refuses the entry, the entry has no index
+    here either: at 25, 69 and 31 of the entries asked below hexagons of the main sample, 39 below
+    the pentagons and 2,988 below the identifiers built by text. Where the test accepts it, this
+    crate finds it in the order itself, at its first place (see Departures from the engine): at 3,
+    11 and 7 below hexagons, 43 below the pentagons and 13 below the identifiers built by text. Of
+    the order of `0000000000000005` at depth 1, the entry at 4 has no index, and the entry at 9 has
+    its place as its index, where the engine has none. Where an order names a zone twice, its index
+    is one of its places.
   - **The compaction.** `compact_zones` gives the engine's answer there as elsewhere, from the
     engine's lists of parents and children as they are. A zone for which the engine finds no
     parent leaves the answer and no zone stands for it (`00000000000000001311`, at resolution

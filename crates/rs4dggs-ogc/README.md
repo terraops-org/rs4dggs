@@ -58,8 +58,8 @@ let area: f64 = zones.iter().filter_map(|&zone| grid.area(zone)).sum();
 
 // JSON: the identifiers as text, the area, and the two links the standard requires.
 let links = [
-    Link { rel: rel::DGGRS, href: "/dggs/ISEA3H", title: None, media_type: None },
-    Link { rel: rel::DGGRS_DEFINITION, href: "/dggrs/ISEA3H", title: None, media_type: None },
+    Link::new(rel::DGGRS, "/dggs/ISEA3H"),
+    Link::new(rel::DGGRS_DEFINITION, "/dggrs/ISEA3H"),
 ];
 let mut json = Vec::new();
 let mut list = ZoneListJson::new(&mut json, grid);
@@ -109,12 +109,9 @@ let dggrs = Dggrs::from_id("ISEA3H").unwrap();
 let zone = dggrs.grid().zone_from_text("C2-23-C")?;
 assert_eq!(dggrs.grid().count_sub_zones(zone, 1)?, 7);
 let height = [Some(-12.5), Some(0.0), None, Some(1234.5678), Some(7.0), Some(f64::NAN), Some(1e17)];
-let data = ZoneData {
-    dggrs,
-    zone,
-    depths: &[1],
-    properties: &[Property { name: "height", depths: &[Values::F64(&height)] }],
-};
+let values = [Values::F64(&height)];
+let properties = [Property::new("height", &values)];
+let data = ZoneData::new(dggrs, zone, &[1], &properties);
 
 // DGGS-JSON: a missing value, and one that is not finite, are written null.
 let mut json = Vec::new();
@@ -242,8 +239,9 @@ tried.
   member out. In the sample described under "How it is verified", three zones of level 19 on each
   aperture-7 grid have a ring that is one point repeated.
 - **Coordinates are written with eight decimals** by default, about a millimetre on the ground,
-  and never with fewer: `Coordinates { decimals: Some(n) }` with `n` below eight writes eight.
-  `Coordinates { decimals: None }` writes the shortest form that reads back to the same double.
+  and never with fewer: `Coordinates::decimals(n)` with `n` below eight writes eight.
+  `Coordinates::shortest()` writes the shortest form that reads back to the same double;
+  `places()` answers the decimals applied.
   The floor is measured: rounded more coarsely, the rings of fine zones were written invalid in
   great numbers, the rounding making them cross or touch themselves (with six decimals, 17 to 27
   per cent of the aperture-7 zones of levels 17 to 19, and 16 to 23 per cent of the aperture-3
@@ -296,6 +294,15 @@ tried.
   small write: a service passes a buffered sink.
 - **DGGAL's own reader reads one depth.** `dgg togeo` reads only the first depth of a DGGS-JSON
   document that holds several; the other depths are not wrong for that.
+- **The public types may grow in a later release.** The structs a caller gives the writers
+  (`Coordinates`, `Link`, `LinkTemplate`, `Property`, `ZoneData`) are built by their
+  constructors, not from their fields: `Link::new(rel, href)` with `with_title` and
+  `with_media_type`, `LinkTemplate::new(rel, uri_template)` with `with_title`,
+  `Property::new(name, depths)` and `ZoneData::new(dggrs, zone, depths, properties)`. The counts
+  of `Written` are read by name. A `match` on `ZoneGeometry`, `Values` or `geometry::Shape`
+  needs an arm for the variants not yet known. Since the constructors borrow their slices, the
+  values and properties of data used in more than one statement are bound first, as in the
+  examples above.
 
 ## How it is verified
 

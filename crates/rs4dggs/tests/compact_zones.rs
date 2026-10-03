@@ -9,16 +9,15 @@
 //! What needs no engine is tested in every build: the answers that are known by name, the
 //! properties of an answer, and the refusals. The comparison with the engine's own
 //! `compactZones`, sequence for sequence, is in the module `engine`, under the `oracle` feature.
+use crate::interfaces::sealed::{Private, TopologyPlumbing};
 use rs4dggs::indexings::Z7;
 use rs4dggs::topologies::HexA7;
-use rs4dggs::{AnyGrid, Error, Extent, GeoPoint, Indexing, Topology, ZoneId};
+use rs4dggs::{AnyGrid, Error, Extent, GeoPoint, Indexing, ZoneId};
 use std::collections::BTreeSet;
 
-// The boxes of the comparison with the engine; other suites use what this one does not.
+// The boxes of the comparison with the engine, which the oracle suites share.
 #[cfg(feature = "oracle")]
-#[allow(dead_code)]
-#[path = "common/boxes.rs"]
-mod boxes;
+use crate::common::boxes;
 
 const APERTURE_3: [&str; 3] = ["ISEA3H", "IVEA3H", "RTEA3H"];
 const APERTURE_7: [&str; 3] = ["IGEO7", "IVEA7H", "RTEA7H"];
@@ -101,7 +100,7 @@ fn aperture_7(grid: AnyGrid) -> bool {
 /// identifiers; the zone must be one that the lattice holds.
 fn order_key(grid: AnyGrid, z: ZoneId) -> u64 {
     if aperture_7(grid) {
-        let place = HexA7::locate(&Z7::decode(z));
+        let place = HexA7::locate(Private, &Z7::decode(z));
         place.expect("a zone that the lattice holds").3
     } else {
         z.0
@@ -731,7 +730,7 @@ fn on_aperture_7_the_refusals_are_those_of_aperture_3() {
                     if answer[0] == named {
                         itself += 1;
                     } else {
-                        assert!(HexA7::locate(&Z7::decode(ZoneId(bits))).is_none());
+                        assert!(HexA7::locate(Private, &Z7::decode(ZoneId(bits))).is_none());
                         another += 1;
                     }
                 }
@@ -1341,7 +1340,8 @@ mod engine {
     /// holds the seventy-two zones of level 1: of those zones, the ones whose digit is 1, 3
     /// or 4 as they are, and the children of the others. The engine answers ten zones of ten
     /// even levels under base cell 1 and its null zone twice, and not the twelve zones of
-    /// level 0; the compaction of this crate, asked beneath the refusal, answers the ten.
+    /// level 0; the compaction of this crate, asked beneath the refusal, answers the ten, which
+    /// the topology's own unit test of the compaction holds to the same ten identifiers.
     #[test]
     fn on_aperture_7_the_engine_loses_zones_of_a_set_of_more_than_one_level() {
         for (name, engine) in ENGINES_7 {
@@ -1391,13 +1391,6 @@ mod engine {
                 "{name}"
             );
             assert_eq!(theirs[10..], [ZoneId(NULL_ZONE); 2], "{name}");
-            let addresses: Vec<rs4dggs::Address> = set.iter().map(|&z| Z7::decode(z)).collect();
-            let ours: Vec<ZoneId> = HexA7::compact(&addresses)
-                .unwrap()
-                .iter()
-                .map(Z7::encode)
-                .collect();
-            assert_eq!(ours, theirs[..10], "{name}");
         }
     }
 

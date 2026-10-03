@@ -35,6 +35,7 @@ use crate::fivebysix::{
     canonicalize5x6, cvtt_i32, floor_i32, move5x6_vertex, move5x6_vertex2, refine5x6,
 };
 use crate::indexings::{fields, is_readable, pack};
+use crate::interfaces::sealed::{Private, TopologyPlumbing};
 use crate::{Address, PlanarPoint, Topology};
 
 /// DGGAL's aperture-3 hexagonal topology: the I9R rhombic grid of every even level, refined at
@@ -1634,20 +1635,6 @@ impl Topology for HexA3 {
         ring
     }
 
-    /// The zone's refined boundary in the 5x6 plane, before any projection, as
-    /// `getRefinedVertices` builds it for WGS84 (`RI3H.ec:456`, `:507`): the corners of
-    /// `getBaseRefinedVertices` with `crs84` true, every side then divided into `n_divisions`
-    /// parts by `refine5x6` with `wrap` true. The points are in the engine's own sequence,
-    /// which runs anticlockwise; nothing is turned here, as [`HexA3::planar_vertices`] turns
-    /// the plain ring.
-    ///
-    /// `a` must satisfy [`HexA3::is_valid_address`]. `None`, which `Grid` gives as the empty
-    /// ring, is the eC's null array, for an identifier of a polar root with a non-zero index;
-    /// no valid address is one.
-    fn planar_refined_vertices(a: &Address, n_divisions: i32) -> Option<Vec<(f64, f64)>> {
-        Some(refine5x6(&base_refined_vertices(a.base)?, n_divisions))
-    }
-
     /// The zone's neighbours, as the engine's `getZoneNeighbors` (`RI3H.ec:119-122`) lists them:
     /// six for a hexagon and five for a pentagon, in the engine's order, which is the order in
     /// which [`crate::Disk`] walks them. They are found in the planar layout, by stepping from the
@@ -1802,11 +1789,44 @@ impl Topology for HexA3 {
     fn sub_zone_at_index(a: &Address, depth: u8, index: u64) -> Option<Address> {
         hex_a3_subzones::sub_zone_at_index(a.base, depth, index).map(|id| Address::new(id, &[]))
     }
+}
+
+impl TopologyPlumbing for HexA3 {
+    /// The zone's refined boundary in the 5x6 plane, before any projection, as
+    /// `getRefinedVertices` builds it for WGS84 (`RI3H.ec:456`, `:507`): the corners of
+    /// `getBaseRefinedVertices` with `crs84` true, every side then divided into `n_divisions`
+    /// parts by `refine5x6` with `wrap` true. The points are in the engine's own sequence,
+    /// which runs anticlockwise; nothing is turned here, as [`HexA3::planar_vertices`] turns
+    /// the plain ring.
+    ///
+    /// `a` must satisfy [`HexA3::is_valid_address`]. `None`, which `Grid` gives as the empty
+    /// ring, is the eC's null array, for an identifier of a polar root with a non-zero index;
+    /// no valid address is one.
+    fn planar_refined_vertices(
+        _: Private,
+        a: &Address,
+        n_divisions: i32,
+    ) -> Option<Vec<(f64, f64)>> {
+        Some(refine5x6(&base_refined_vertices(a.base)?, n_divisions))
+    }
+
+    /// DGGAL's compaction of a set of zones (`compactZones`, `RI3H.ec:161-186`), in ascending
+    /// order of the identifiers: see [`compact`]. Every address must satisfy
+    /// [`HexA3::is_valid_address`], which `Grid` checks first.
+    fn compact(_: Private, zones: &[Address]) -> Option<Vec<Address>> {
+        let ids: Vec<u64> = zones.iter().map(|a| a.base).collect();
+        Some(
+            compact(&ids)
+                .into_iter()
+                .map(|id| Address::new(id, &[]))
+                .collect(),
+        )
+    }
 
     /// `3^(level / 2)` cells along a rhombus: the I9R grid of the even level at or below
     /// `level`, whose index within a rhombus runs left to right and top to bottom
     /// (`RI3H.ec:858-861`). Nought beyond resolution 33.
-    fn lattice_edge(level: u8) -> u64 {
+    fn lattice_edge(_: Private, level: u8) -> u64 {
         if level > MAX_LEVEL {
             return 0;
         }
@@ -1821,8 +1841,8 @@ impl Topology for HexA3 {
     /// at one level the value reads, from its highest field down, the root rhombus, the index
     /// `row * 3^(level / 2) + col` and the sub-hexagon, which is the walk rhombus by rhombus,
     /// row by row and cell by cell, and the polar roots 10 and 11 after the ten rhombi.
-    fn cell_zones(level: u8, root: u8, row: u64, col: u64) -> Vec<(Address, u64)> {
-        let p = Self::lattice_edge(level);
+    fn cell_zones(_: Private, level: u8, root: u8, row: u64, col: u64) -> Vec<(Address, u64)> {
+        let p = Self::lattice_edge(Private, level);
         if root > 9 || row >= p || col >= p {
             return Vec::new();
         }
@@ -1845,7 +1865,7 @@ impl Topology for HexA3 {
     /// sub-hexagon B at an odd one, as `listZones` adds the two poles to every answer
     /// (`RI3H.ec:795-799`). The engine reads the sub-hexagons C and D of a polar root from text
     /// and lists neither; see [`HexA3::is_valid_address`].
-    fn polar_zones(level: u8, root: u8) -> Vec<(Address, u64)> {
+    fn polar_zones(_: Private, level: u8, root: u8) -> Vec<(Address, u64)> {
         if level > MAX_LEVEL || !(10..=11).contains(&root) {
             return Vec::new();
         }
@@ -1861,26 +1881,13 @@ impl Topology for HexA3 {
     /// The root, and the row and the column that the index within the root holds as
     /// `row * 3^levelI9R + col`, left to right and top to bottom (`RI3H.ec:858-861`). `None`
     /// for an address that [`HexA3::is_valid_address`] refuses.
-    fn locate(a: &Address) -> Option<(u8, u64, u64, u64)> {
+    fn locate(_: Private, a: &Address) -> Option<(u8, u64, u64, u64)> {
         if !Self::is_valid_address(a) {
             return None;
         }
         let (level_i9r, root, ix, _) = fields(a.base);
         let p = pow3(level_i9r);
         Some((root as u8, ix / p, ix % p, a.base))
-    }
-
-    /// DGGAL's compaction of a set of zones (`compactZones`, `RI3H.ec:161-186`), in ascending
-    /// order of the identifiers: see [`compact`]. Every address must satisfy
-    /// [`HexA3::is_valid_address`], which `Grid` checks first.
-    fn compact(zones: &[Address]) -> Option<Vec<Address>> {
-        let ids: Vec<u64> = zones.iter().map(|a| a.base).collect();
-        Some(
-            compact(&ids)
-                .into_iter()
-                .map(|id| Address::new(id, &[]))
-                .collect(),
-        )
     }
 }
 

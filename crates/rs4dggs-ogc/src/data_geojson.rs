@@ -48,12 +48,9 @@ use crate::{Coordinates, Error, Result, Written, ZoneGeometry, ZoneListGeoJson, 
 /// let dggrs = Dggrs::from_id("ISEA3H").unwrap();
 /// let zone = dggrs.grid().zone_from_text("C2-23-C")?;
 /// let band = [Some(1), Some(2), None, Some(4), Some(5), Some(6), Some(7)];
-/// let data = ZoneData {
-///     dggrs,
-///     zone,
-///     depths: &[1],
-///     properties: &[Property { name: "class", depths: &[Values::U8(&band)] }],
-/// };
+/// let values = [Values::U8(&band)];
+/// let properties = [Property::new("class", &values)];
+/// let data = ZoneData::new(dggrs, zone, &[1], &properties);
 /// let mut out = Vec::new();
 /// let coords = Coordinates::default();
 /// let written = write_zone_data_geojson(&mut out, &data, ZoneGeometry::None, coords)?;

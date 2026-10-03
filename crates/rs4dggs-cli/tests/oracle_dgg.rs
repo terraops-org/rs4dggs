@@ -880,9 +880,8 @@ fn sub_and_index_on_aperture_7(
     }
 
     // Along the seams the engine's index of a sub-zone may be a position at which its own order
-    // holds another zone. The tool states an index only where the order holds the sub-zone at
-    // it, and here says that there is none: the order holds the sub-zone at position 3, and
-    // `dgg` says 6.
+    // holds another zone. The tool states the position at which the order holds the sub-zone:
+    // 3, where `dgg` says 6.
     let (zone, sub) = ("00000000000000000", "000000000000000001");
     let list = json_strings(&dgg(&[dgg_name, "sub", zone, "-depth", "1"]));
     assert_eq!(tool_sub_zones(tool_name, zone, 1), list, "{tool_name}");
@@ -899,7 +898,7 @@ fn sub_and_index_on_aperture_7(
     );
     assert_eq!(
         tool_ok(&[tool_name, "index", zone, sub]),
-        format!("{sub} has no index among the sub-zones of {zone}\n"),
+        format!("{sub} is sub-zone 3 of {zone}, at depth 1\n"),
         "{tool_name}"
     );
 }

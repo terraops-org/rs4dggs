@@ -12,7 +12,11 @@ use crate::geometry::{self, Shape};
 use crate::{Error, Result, json};
 
 /// How a zone's geometry is written: the standard's `geometry` parameter.
+///
+/// The type may gain variants in a later release, so that a `match` on it outside this crate
+/// needs an arm for the others.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ZoneGeometry {
     /// The zone's region: its boundary as the library's refined ring, made a `Polygon`, or a
     /// `MultiPolygon` where the antimeridian cuts it, by [`geometry::clean`].
@@ -35,10 +39,58 @@ pub enum ZoneGeometry {
 /// cent of the aperture-7 zones of levels 17 to 19, and 16 to 23 per cent of the aperture-3 zones
 /// of levels 31 to 33, in a sample at middle latitudes; with seven, 19 per cent of the aperture-7
 /// zones of level 19), the rounding making their rings cross or touch themselves.
+///
+/// Built by [`Coordinates::decimals`], [`Coordinates::shortest`] or [`Default`], and read by
+/// [`Coordinates::places`]; the type may gain fields in a later release, so that it is not built
+/// from its fields outside this crate.
+///
+/// ```
+/// use rs4dggs_ogc::Coordinates;
+///
+/// assert_eq!(Coordinates::default(), Coordinates::decimals(8));
+/// assert_eq!(Coordinates::decimals(3).places(), Some(8));
+/// assert_eq!(Coordinates::decimals(10).places(), Some(10));
+/// assert_eq!(Coordinates::shortest().places(), None);
+/// ```
+///
+/// Built from its fields outside this crate, it does not compile:
+///
+/// ```compile_fail,E0639
+/// let shortest = rs4dggs_ogc::Coordinates { decimals: None };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Coordinates {
-    /// The number of decimals of every coordinate, never fewer than eight (a smaller number is
-    /// taken as eight), or `None` for the shortest form that reads back to the same double.
+    /// The number of decimals of every coordinate, as [`Coordinates::places`] answers it.
+    decimals: Option<u8>,
+}
+
+/// The fewest decimals with which a coordinate is written.
+const MIN_DECIMALS: u8 = 8;
+
+impl Default for Coordinates {
+    /// Eight decimals.
+    fn default() -> Self {
+        Self::decimals(MIN_DECIMALS)
+    }
+}
+
+impl Coordinates {
+    /// Every coordinate with `n` decimals, and with eight where `n` is fewer: eight is the
+    /// fewest.
+    pub const fn decimals(n: u8) -> Self {
+        Self {
+            decimals: Some(if n < MIN_DECIMALS { MIN_DECIMALS } else { n }),
+        }
+    }
+
+    /// Every coordinate in the shortest form that reads back to the same double.
+    pub const fn shortest() -> Self {
+        Self { decimals: None }
+    }
+
+    /// The number of decimals of every coordinate, never fewer than eight, or `None` for the
+    /// shortest form that reads back to the same double.
     ///
     /// With decimals, the ring is rounded before it is made a polygon, so that points the
     /// rounding makes equal are one point, and a vertex at which the rounded ring turns back on
@@ -49,22 +101,10 @@ pub struct Coordinates {
     /// eight decimals are those of rings the engine itself draws crossing, and twelve zones of the
     /// finest aperture-3 levels at the poles are written without geometry, their rounded ring
     /// enclosing nothing.
-    pub decimals: Option<u8>,
-}
-
-/// The fewest decimals with which a coordinate is written.
-const MIN_DECIMALS: u8 = 8;
-
-impl Default for Coordinates {
-    /// Eight decimals.
-    fn default() -> Self {
-        Self {
-            decimals: Some(MIN_DECIMALS),
-        }
+    pub const fn places(&self) -> Option<u8> {
+        self.decimals
     }
-}
 
-impl Coordinates {
     /// The decimals with which the coordinates are written: those asked, but never fewer than
     /// eight; `None` for the shortest form.
     fn applied(self) -> Option<u8> {
@@ -72,8 +112,10 @@ impl Coordinates {
     }
 }
 
-/// What a list of zones as GeoJSON holds, as [`ZoneListGeoJson::finish`] counts it.
+/// What a list of zones as GeoJSON holds, as [`ZoneListGeoJson::finish`] counts it. The type
+/// may gain fields in a later release, so that a caller reads its fields by name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct Written {
     /// The features written, one for each zone given.
     pub features: u64,
@@ -407,7 +449,7 @@ mod tests {
     use crate::geometry::{census, prepared};
 
     const REGION: ZoneGeometry = ZoneGeometry::Region { edge_refinement: 0 };
-    const SHORTEST: Coordinates = Coordinates { decimals: None };
+    const SHORTEST: Coordinates = Coordinates::shortest();
 
     fn grid(name: &str) -> AnyGrid {
         rs4dggs::get_grid(name).unwrap()
@@ -593,7 +635,7 @@ mod tests {
 
     #[test]
     fn by_default_every_coordinate_has_eight_decimals_and_never_fewer() {
-        assert_eq!(Coordinates::default(), Coordinates { decimals: Some(8) });
+        assert_eq!(Coordinates::default(), Coordinates::decimals(8));
         for (name, texts) in [
             ("ISEA3H", ["E6-317-A", "A8-0-C"]),
             ("IGEO7", ["01012", "005"]),
@@ -606,18 +648,10 @@ mod tests {
                 assert!(every_coordinate_has(&eight, 8), "{name}: {eight}");
                 // Fewer decimals asked are eight.
                 for fewer in [0, 3, 6, 7] {
-                    let (out, _) = list(
-                        g,
-                        &zones,
-                        geometry,
-                        Coordinates {
-                            decimals: Some(fewer),
-                        },
-                        1,
-                    );
+                    let (out, _) = list(g, &zones, geometry, Coordinates::decimals(fewer), 1);
                     assert_eq!(out, eight, "{name}, {fewer} decimals asked");
                 }
-                let (ten, _) = list(g, &zones, geometry, Coordinates { decimals: Some(10) }, 1);
+                let (ten, _) = list(g, &zones, geometry, Coordinates::decimals(10), 1);
                 assert!(every_coordinate_has(&ten, 10), "{name}: {ten}");
             }
         }
@@ -637,7 +671,7 @@ mod tests {
         let lisbon = g.zone_from_geo(38.7223, -9.1393, 19).unwrap();
         let ring = g.refined_vertices(lisbon, 0).unwrap();
         assert!(geometry::drawn(&ring, Some(0)).is_none());
-        let (out, w) = list(g, &[lisbon], REGION, Coordinates { decimals: Some(0) }, 1);
+        let (out, w) = list(g, &[lisbon], REGION, Coordinates::decimals(0), 1);
         assert_eq!((w.features, w.without_geometry), (1, 0));
         assert!(every_coordinate_has(&out, 8), "{out}");
         census::valid(&geometry::drawn(&ring, Some(8)).unwrap()).unwrap();

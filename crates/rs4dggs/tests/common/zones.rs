@@ -26,6 +26,7 @@
 //! zone: every zone returned meets the box by the engine's own extent of it, no neighbour of a
 //! returned zone that meets the box is missing, the zone at the centre of the box is there,
 //! and the answer taken in pages is the same answer, with nothing after its last zone.
+use crate::interfaces::sealed::{Private, TopologyPlumbing};
 use std::collections::{BTreeSet, HashSet};
 
 use dggal_oracle as o;
@@ -90,7 +91,7 @@ fn are_in_the_order_of_the_level<S: Subject>(level: u8, zones: &[ZoneId], what: 
     let g = S::grid();
     let key = |z: ZoneId| -> u64 {
         assert_eq!(g.resolution(z), level, "{what}: {}", g.text_id(z));
-        S::T::locate(&S::I::decode(z))
+        S::T::locate(Private, &S::I::decode(z))
             .unwrap_or_else(|| panic!("{what}: {} is no zone of the lattice", g.text_id(z)))
             .3
     };
@@ -1077,7 +1078,7 @@ pub fn the_enumerations_the_estimate_and_the_compaction_withstand_hostile_input<
                         Error::NonFinite { .. }
                             | Error::LatitudeOutOfRange { .. }
                             | Error::LongitudeOutOfRange { .. }
-                            | Error::InvertedBox { .. }
+                            | Error::InvertedBox
                     ),
                     "{what}: {e:?}"
                 );

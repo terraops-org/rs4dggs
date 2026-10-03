@@ -38,12 +38,9 @@ use crate::{Result, ubjson};
 /// let dggrs = Dggrs::from_id("ISEA3H").unwrap();
 /// let zone = dggrs.grid().zone_from_text("C2-23-C")?;
 /// let band = [Some(10u16), Some(200), Some(300), Some(400), Some(500), Some(600), Some(700)];
-/// let data = ZoneData {
-///     dggrs,
-///     zone,
-///     depths: &[1],
-///     properties: &[Property { name: "h", depths: &[Values::U16(&band)] }],
-/// };
+/// let values = [Values::U16(&band)];
+/// let properties = [Property::new("h", &values)];
+/// let data = ZoneData::new(dggrs, zone, &[1], &properties);
 /// let mut out = Vec::new();
 /// write_dggs_ubjson(&mut out, &data)?;
 /// // The data: a typed container of seven int16 (`[$I#i\x07`), and the closing marks.

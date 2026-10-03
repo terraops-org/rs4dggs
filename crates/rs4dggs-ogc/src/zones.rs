@@ -35,8 +35,8 @@ use crate::{Error, Result, json};
 /// let mut list = ZoneListJson::new(Vec::new(), grid);
 /// list.zone(grid.zone_from_text("A6-0-C")?)?;
 /// let links = [
-///     Link { rel: rel::DGGRS, href: "/dggs/ISEA3H", title: None, media_type: None },
-///     Link { rel: rel::DGGRS_DEFINITION, href: "/dggrs/ISEA3H", title: None, media_type: None },
+///     Link::new(rel::DGGRS, "/dggs/ISEA3H"),
+///     Link::new(rel::DGGRS_DEFINITION, "/dggrs/ISEA3H"),
 /// ];
 /// assert_eq!(list.finish(None, &links, &[])?, 1);
 /// # Ok::<(), Box<dyn std::error::Error>>(())

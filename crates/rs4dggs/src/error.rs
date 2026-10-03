@@ -121,35 +121,29 @@ pub enum Error {
         /// The greatest edge refinement accepted.
         max: u32,
     },
-    /// A latitude of a bounding box beyond a pole, outside -90 to 90 degrees. `bits` are the
-    /// IEEE 754 bits of the latitude as the caller gave it, which `f64::from_bits` reads back
-    /// (the error holds no floating-point field, so that it stays comparable with `Eq`).
+    /// A latitude of a bounding box beyond a pole, outside -90 to 90 degrees. `name` is the
+    /// coordinate at fault, `"south"` or `"north"`, as in [`Error::NonFinite`]; the caller holds
+    /// the box, and so its value.
     ///
     /// DGGAL answers a box of this kind with something, or with nothing; this crate refuses it
     /// instead, so that no caller takes a box beyond the poles for a box at them.
     LatitudeOutOfRange {
-        /// The bits of the latitude, in degrees.
-        bits: u64,
+        /// The coordinate of the box at fault: `"south"` or `"north"`.
+        name: &'static str,
     },
-    /// A longitude of a bounding box outside -180 to 180 degrees. `bits` are as in
-    /// [`Error::LatitudeOutOfRange`].
+    /// A longitude of a bounding box outside -180 to 180 degrees. `name` is the coordinate at
+    /// fault, `"west"` or `"east"`, as in [`Error::LatitudeOutOfRange`].
     ///
     /// DGGAL answers such a box if its west lies below its east, and overflows its stack if
     /// not; this crate refuses it in both cases, and a service that holds longitudes beyond
     /// that range brings them within it before it asks.
     LongitudeOutOfRange {
-        /// The bits of the longitude, in degrees.
-        bits: u64,
+        /// The coordinate of the box at fault: `"west"` or `"east"`.
+        name: &'static str,
     },
     /// A bounding box whose south lies above its north. A west above the east is not an error:
-    /// the box then runs eastwards over the antimeridian. `south_bits` and `north_bits` are as
-    /// the bits in [`Error::LatitudeOutOfRange`].
-    InvertedBox {
-        /// The bits of the southern latitude, in degrees.
-        south_bits: u64,
-        /// The bits of the northern latitude, in degrees.
-        north_bits: u64,
-    },
+    /// the box then runs eastwards over the antimeridian.
+    InvertedBox,
     /// Zones of more than one level, given to [`crate::Grid::compact_zones`], which compacts
     /// the zones of one level. `level` is the level of the first zone of the slice and
     /// `other` that of the first zone found of another.
@@ -234,25 +228,15 @@ impl fmt::Display for Error {
             Error::EdgeRefinementOutOfRange { refinement, max } => {
                 write!(f, "edge refinement {refinement} out of range 0 to {max}")
             }
-            Error::LatitudeOutOfRange { bits } => write!(
-                f,
-                "latitude {} is outside -90 to 90 degrees",
-                f64::from_bits(*bits)
-            ),
-            Error::LongitudeOutOfRange { bits } => write!(
-                f,
-                "longitude {} is outside -180 to 180 degrees",
-                f64::from_bits(*bits)
-            ),
-            Error::InvertedBox {
-                south_bits,
-                north_bits,
-            } => write!(
-                f,
-                "the box's south latitude {} lies above its north latitude {}",
-                f64::from_bits(*south_bits),
-                f64::from_bits(*north_bits)
-            ),
+            Error::LatitudeOutOfRange { name } => {
+                write!(f, "the {name} latitude is outside -90 to 90 degrees")
+            }
+            Error::LongitudeOutOfRange { name } => {
+                write!(f, "the {name} longitude is outside -180 to 180 degrees")
+            }
+            Error::InvertedBox => {
+                write!(f, "the box's south latitude lies above its north latitude")
+            }
             Error::MixedLevels { level, other } => write!(
                 f,
                 "the zones are of more than one level: {level} and {other}"
@@ -332,25 +316,20 @@ mod tests {
     }
 
     #[test]
-    fn the_box_refusals_name_the_offending_values() {
-        let e = Error::LatitudeOutOfRange {
-            bits: 91.5f64.to_bits(),
-        };
-        assert_eq!(e.to_string(), "latitude 91.5 is outside -90 to 90 degrees");
-        let e = Error::LongitudeOutOfRange {
-            bits: (-181.0f64).to_bits(),
-        };
+    fn the_box_refusals_name_the_coordinate_at_fault() {
+        let e = Error::LatitudeOutOfRange { name: "north" };
         assert_eq!(
             e.to_string(),
-            "longitude -181 is outside -180 to 180 degrees"
+            "the north latitude is outside -90 to 90 degrees"
         );
-        let e = Error::InvertedBox {
-            south_bits: 40.0f64.to_bits(),
-            north_bits: 30.0f64.to_bits(),
-        };
+        let e = Error::LongitudeOutOfRange { name: "west" };
         assert_eq!(
             e.to_string(),
-            "the box's south latitude 40 lies above its north latitude 30"
+            "the west longitude is outside -180 to 180 degrees"
+        );
+        assert_eq!(
+            Error::InvertedBox.to_string(),
+            "the box's south latitude lies above its north latitude"
         );
     }
 }

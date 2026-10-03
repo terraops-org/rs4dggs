@@ -60,24 +60,34 @@ impl<'a> Collection<'a> {
 
     /// The geometry of `id`: its polygon, or with `-centroids` its centroid; `None` if a
     /// coordinate of it is not finite.
-    fn geometry(&self, grid: &AnyGrid, id: ZoneId) -> Option<String> {
+    ///
+    /// A shape of a kind this tool does not know is refused with an error rather than written
+    /// wrongly or counted as something else: `clean` makes only polygons and multipolygons today,
+    /// but the tool may be built against a later `rs4dggs-ogc` that makes another kind.
+    fn geometry(&self, grid: &AnyGrid, id: ZoneId) -> io::Result<Option<String>> {
         if self.centroids {
             let c = grid.centroid(id);
             let p = [c.lon, c.lat];
-            return p
+            return Ok(p
                 .iter()
                 .all(|x| x.is_finite())
-                .then(|| format!(r#"{{"type":"Point","coordinates":{}}}"#, self.position(p)));
+                .then(|| format!(r#"{{"type":"Point","coordinates":{}}}"#, self.position(p))));
         }
         let shape = clean(&grid.vertices(id));
         let all: Vec<&[f64; 2]> = match &shape {
             Shape::Polygon(r) => r.iter().collect(),
             Shape::MultiPolygon(rs) => rs.iter().flatten().collect(),
+            _ => {
+                return Err(io::Error::other(format!(
+                    "the shape of zone {} is of a kind this version of the tool cannot write",
+                    grid.text_id(id)
+                )));
+            }
         };
         if all.iter().any(|p| !(p[0].is_finite() && p[1].is_finite())) {
-            return None;
+            return Ok(None);
         }
-        Some(match &shape {
+        Ok(Some(match &shape {
             Shape::Polygon(r) => {
                 format!(r#"{{"type":"Polygon","coordinates":[{}]}}"#, self.ring(r))
             }
@@ -89,7 +99,8 @@ impl<'a> Collection<'a> {
                     polygons.join(",")
                 )
             }
-        })
+            _ => unreachable!("a shape of another kind is refused above"),
+        }))
     }
 
     /// Writes the feature of zone `id`, with `extra` after its properties: members already
@@ -104,7 +115,7 @@ impl<'a> Collection<'a> {
             self.no_area += 1;
             return Ok(());
         }
-        let Some(geometry) = self.geometry(grid, id) else {
+        let Some(geometry) = self.geometry(grid, id)? else {
             self.not_finite += 1;
             return Ok(());
         };

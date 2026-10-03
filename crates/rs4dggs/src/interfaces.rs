@@ -44,8 +44,137 @@ use crate::types::{Address, GeoPoint, GridConfig, PlanarPoint, ZoneId};
 /// themselves stay public and nameable as bounds, as [`crate::Grid`]'s own parameters
 /// and the test suite's `Subject` do; a caller composes a grid from the parts this
 /// crate ships, rather than supplying a fourth kind of any of the three.
+///
+/// The same module holds the methods that the crate calls on its own parts and that no caller
+/// may: [`sealed::ProjectionPlumbing`] and [`sealed::TopologyPlumbing`], supertraits of
+/// [`Projection`] and [`Topology`]. Code outside the crate cannot name either trait, so that it
+/// cannot call their methods on a type; and each method takes a [`sealed::Private`], which it
+/// cannot build, so that it cannot call them either through a generic parameter bound by the
+/// public trait, which reaches the methods of every supertrait.
 pub(crate) mod sealed {
+    use crate::types::{Address, PlanarPoint};
+
     pub trait Sealed {}
+
+    /// The first argument of every method of the two traits below. It is no part of the public
+    /// interface: code outside the crate can neither name it nor build one.
+    #[derive(Debug, Clone, Copy)]
+    pub struct Private;
+
+    /// What `Grid` asks of its projection and a caller may not: the crate's own plumbing.
+    pub trait ProjectionPlumbing {
+        /// [`super::Projection::inverse`] as the eC's `inverse` itself answers
+        /// (`ri5x6.ec:511-556`): the latitude and the longitude in radians, in that order, or
+        /// `None` where the eC's function returns `false`, which is where
+        /// [`super::Projection::inverse`] answers the zero point. `Grid` builds the refined
+        /// boundary of a zone on it, as the engine does: there a point whose inverse fails is
+        /// left out, and neighbouring points are compared in radians.
+        fn inverse_radians(
+            _: Private,
+            geom: &<Self as super::Projection>::Geometry,
+            p: PlanarPoint,
+            odd_grid: bool,
+        ) -> Option<(f64, f64)>
+        where
+            Self: super::Projection;
+
+        /// The latitude, on the sphere this projection works on, of the geodetic latitude
+        /// `lat`, both in radians: the authalic latitude, by the eC's `latGeodeticToAuthalic`
+        /// (`authalic.ec:9`), where the configuration asks for that conversion, exactly as
+        /// [`super::Projection::forward`] makes it (`ri5x6.ec:252-255`, `:397`), and `lat`
+        /// itself where it does not. The zones of a grid are equal in area on that sphere, so
+        /// that `Grid` takes the area of a bounding box there when it counts in zones.
+        fn sphere_latitude(
+            _: Private,
+            geom: &<Self as super::Projection>::Geometry,
+            lat: f64,
+        ) -> f64
+        where
+            Self: super::Projection;
+    }
+
+    /// What `Grid` asks of its topology and a caller may not: the crate's own plumbing.
+    pub trait TopologyPlumbing {
+        /// The refined boundary of the cell at `a` in the projection's plane, before any
+        /// projection: the ring of points `(x, y)` that the engine's `getRefinedVertices` builds
+        /// first (`RI7H.ec:544`, `RI3H.ec:507`) and then takes through the inverse projection one
+        /// by one, with each edge divided into `n_divisions` parts, in the engine's own sequence,
+        /// as the engine builds it for a ring bound for WGS84 (the eC's `crs84` is true).
+        /// `n_divisions` is the eC's `int` as it reaches that ring: `Grid` has already put, in
+        /// place of an automatic refinement, the number the engine chooses for the level of the
+        /// zone.
+        ///
+        /// `None` means "no override": this topology has no refined boundary, and `Grid` then
+        /// answers the empty ring and no extent, for there is no grid-agnostic way to refine an
+        /// edge as the engine does.
+        ///
+        /// `a` must satisfy [`super::Topology::is_valid_address`] and must not be one for which
+        /// [`super::Topology::is_null_geometry`] holds; an implementation may panic otherwise,
+        /// and `Grid` asks both before it calls this.
+        fn planar_refined_vertices(
+            _: Private,
+            _a: &Address,
+            _n_divisions: i32,
+        ) -> Option<Vec<(f64, f64)>> {
+            None
+        }
+
+        /// DGGAL's `compactZones` of a set of zones: the zones that stand for the set, a coarser
+        /// zone in place of those of its sub-zones that it alone holds wherever the set has all
+        /// of them, in the engine's order of answer. A zone given twice counts once. `None` for
+        /// a topology that has no compaction.
+        ///
+        /// Every address must satisfy [`super::Topology::is_valid_address`], and the addresses
+        /// are meant to be of one level; `Grid` checks both before it asks, and an
+        /// implementation may panic otherwise. The cost is that of the slice.
+        fn compact(_: Private, _zones: &[Address]) -> Option<Vec<Address>> {
+            None
+        }
+
+        /// The number of cells along the side of a root rhombus at `level`. The zones of a level
+        /// form a lattice: ten root rhombi, 0 to 9, each of `lattice_edge(level)` rows by as many
+        /// columns of cells, and two polar roots, 10 and 11, of one cell each. Taken rhombus by
+        /// rhombus, row by row and cell by cell, and then the two polar roots, the zones those
+        /// cells host are every zone of the level, each once, in the order of DGGAL's `listZones`.
+        ///
+        /// A topology that does not order its zones so leaves this and the three methods below as
+        /// they are: a side of nought, no zone in any cell and no place for any zone, so that a
+        /// walk of its lattice visits nothing. Nought also answers a level beyond the topology's
+        /// finest.
+        fn lattice_edge(_: Private, _level: u8) -> u64 {
+            0
+        }
+
+        /// The zones that the cell at `row` and `col` of the root rhombus `root` (0 to 9) hosts at
+        /// `level`, in the order of DGGAL's `listZones`, each with its key in that order: the keys
+        /// ascend along the walk that [`TopologyPlumbing::lattice_edge`] describes. A key orders
+        /// the zones of one level alone and is not to be compared across levels. Nothing for a cell
+        /// the lattice does not have: a root above 9, a row or a column at or beyond the side, a
+        /// level beyond the finest.
+        fn cell_zones(
+            _: Private,
+            _level: u8,
+            _root: u8,
+            _row: u64,
+            _col: u64,
+        ) -> Vec<(Address, u64)> {
+            Vec::new()
+        }
+
+        /// The zones of the polar root `root`, 10 or 11, at `level`, as
+        /// [`TopologyPlumbing::cell_zones`] gives those of a cell. Nothing for any other root.
+        fn polar_zones(_: Private, _level: u8, _root: u8) -> Vec<(Address, u64)> {
+            Vec::new()
+        }
+
+        /// Where the lattice holds the zone `a`: its root, the row and the column of the cell that
+        /// hosts it (both nought under a polar root), and its key, as
+        /// [`TopologyPlumbing::cell_zones`] and [`TopologyPlumbing::polar_zones`] give it. `None`
+        /// for an address the lattice does not hold.
+        fn locate(_: Private, _a: &Address) -> Option<(u8, u64, u64, u64)> {
+            None
+        }
+    }
 }
 
 /// Converts between geographic coordinates and a projection's planar face
@@ -58,8 +187,27 @@ pub(crate) mod sealed {
 /// `forward`/`inverse`, which keeps both pure functions of their explicit
 /// arguments rather than methods on a stateful object.
 ///
-/// Sealed by a private supertrait: only this crate's own projections implement it.
-pub trait Projection: sealed::Sealed {
+/// Sealed by a private supertrait: only this crate's own projections implement it. The
+/// methods that the crate asks of a projection for itself alone are not reachable from outside
+/// it, neither on a type nor through a generic parameter:
+///
+/// ```compile_fail,E0576
+/// use rs4dggs::projections::Isea;
+/// use rs4dggs::{GridConfig, PlanarPoint, Projection};
+///
+/// let geom = Isea::build_geometry(&GridConfig::default());
+/// let p = PlanarPoint { face: -1, x: 1.0, y: 1.0 };
+/// let _ = <Isea as Projection>::inverse_radians(&geom, p, false);
+/// ```
+///
+/// ```compile_fail,E0061
+/// use rs4dggs::{PlanarPoint, Projection};
+///
+/// fn radians<P: Projection>(geom: &P::Geometry, p: PlanarPoint) -> Option<(f64, f64)> {
+///     P::inverse_radians(geom, p, false)
+/// }
+/// ```
+pub trait Projection: sealed::Sealed + sealed::ProjectionPlumbing {
     /// The state this projection precomputes once for a configuration, and reads on
     /// every call thereafter.
     type Geometry: Send + Sync + 'static;
@@ -80,32 +228,6 @@ pub trait Projection: sealed::Sealed {
     /// there. The caller decides it as the engine does for its grid; `Grid` documents
     /// the rule for the aperture-7 grids at the two call sites.
     fn inverse(geom: &Self::Geometry, p: PlanarPoint, odd_grid: bool) -> GeoPoint;
-
-    /// [`Projection::inverse`] as the eC's `inverse` itself answers (`ri5x6.ec:511-556`):
-    /// the latitude and the longitude in radians, in that order, or `None` where the eC's
-    /// function returns `false`, which is where [`Projection::inverse`] answers the zero
-    /// point. `Grid` builds the refined boundary of a zone on it, as the engine does: there
-    /// a point whose inverse fails is left out, and neighbouring points are compared in
-    /// radians.
-    ///
-    /// This is the crate's own plumbing and no part of its public interface, which answers
-    /// in degrees throughout; it may change or go in any release. It is a method of this
-    /// trait only because `Grid` reaches its projection through the trait alone.
-    #[doc(hidden)]
-    fn inverse_radians(geom: &Self::Geometry, p: PlanarPoint, odd_grid: bool)
-    -> Option<(f64, f64)>;
-
-    /// The latitude, on the sphere this projection works on, of the geodetic latitude `lat`,
-    /// both in radians: the authalic latitude, by the eC's `latGeodeticToAuthalic`
-    /// (`authalic.ec:9`), where the configuration asks for that conversion, exactly as
-    /// [`Projection::forward`] makes it (`ri5x6.ec:252-255`, `:397`), and `lat` itself where
-    /// it does not. The zones of a grid are equal in area on that sphere, so that `Grid` takes the
-    /// area of a bounding box there when it counts in zones.
-    ///
-    /// This is the crate's own plumbing, as [`Projection::inverse_radians`] is, and no part of
-    /// its public interface.
-    #[doc(hidden)]
-    fn sphere_latitude(geom: &Self::Geometry, lat: f64) -> f64;
 }
 
 /// Converts between a projection's planar coordinates and a topology's own
@@ -120,8 +242,56 @@ pub trait Projection: sealed::Sealed {
 /// actually reads it, so it is left out rather than threaded through
 /// unused.
 ///
-/// Sealed by a private supertrait: only this crate's own topologies implement it.
-pub trait Topology: sealed::Sealed {
+/// Sealed by a private supertrait: only this crate's own topologies implement it. The methods
+/// that the crate asks of a topology for itself alone are not reachable from outside it,
+/// neither on a type nor through a generic parameter:
+///
+/// ```compile_fail,E0576
+/// use rs4dggs::Topology;
+/// use rs4dggs::topologies::HexA7;
+///
+/// let _ = <HexA7 as Topology>::compact(&[]);
+/// ```
+///
+/// ```compile_fail,E0061
+/// use rs4dggs::{Address, Topology};
+///
+/// fn compacted<T: Topology>(zones: &[Address]) -> Option<Vec<Address>> {
+///     T::compact(zones)
+/// }
+/// ```
+///
+/// The walk of the lattice of a level, in which the crate enumerates its zones, is among them:
+///
+/// ```compile_fail,E0576
+/// use rs4dggs::Topology;
+/// use rs4dggs::topologies::HexA7;
+///
+/// let _ = <HexA7 as Topology>::lattice_edge(5);
+/// ```
+///
+/// ```compile_fail,E0576
+/// use rs4dggs::Topology;
+/// use rs4dggs::topologies::HexA3;
+///
+/// let _ = <HexA3 as Topology>::cell_zones(5, 0, 0, 0);
+/// ```
+///
+/// ```compile_fail,E0576
+/// use rs4dggs::Topology;
+/// use rs4dggs::topologies::HexA7;
+///
+/// let _ = <HexA7 as Topology>::polar_zones(5, 10);
+/// ```
+///
+/// ```compile_fail,E0061
+/// use rs4dggs::{Address, Topology};
+///
+/// fn key<T: Topology>(a: &Address) -> Option<u64> {
+///     T::locate(a).map(|place| place.3)
+/// }
+/// ```
+pub trait Topology: sealed::Sealed + sealed::TopologyPlumbing {
     /// The tessellation's aperture: how many children one cell splits into
     /// per resolution level (7 for the hexagonal aperture-7 grids, 3 for the
     /// hexagonal aperture-3 grids).
@@ -243,31 +413,6 @@ pub trait Topology: sealed::Sealed {
     /// `a` must satisfy [`Topology::is_valid_address`], as for
     /// [`Topology::planar_centroid`].
     fn planar_vertices(a: &Address) -> Vec<PlanarPoint>;
-
-    /// The refined boundary of the cell at `a` in the projection's plane, before any
-    /// projection: the ring of points `(x, y)` that the engine's `getRefinedVertices` builds
-    /// first (`RI7H.ec:544`, `RI3H.ec:507`) and then takes through the inverse projection one
-    /// by one, with each edge divided into `n_divisions` parts, in the engine's own sequence,
-    /// as the engine builds it for a ring bound for WGS84 (the eC's `crs84` is true).
-    /// `n_divisions` is the eC's `int` as it reaches that ring: `Grid` has already put, in
-    /// place of an automatic refinement, the number the engine chooses for the level of the
-    /// zone.
-    ///
-    /// `None` means "no override": this topology has no refined boundary, and `Grid` then
-    /// answers the empty ring and no extent, for there is no grid-agnostic way to refine an
-    /// edge as the engine does.
-    ///
-    /// `a` must satisfy [`Topology::is_valid_address`] and must not be one for which
-    /// [`Topology::is_null_geometry`] holds; an implementation may panic otherwise, and `Grid`
-    /// asks both before it calls this.
-    ///
-    /// This is the crate's own plumbing and no part of its public interface, which answers
-    /// in degrees throughout; it may change or go in any release. It is a method of this
-    /// trait only because `Grid` reaches its topology through the trait alone.
-    #[doc(hidden)]
-    fn planar_refined_vertices(_a: &Address, _n_divisions: i32) -> Option<Vec<(f64, f64)>> {
-        None
-    }
 
     /// Whether `a`'s geometry is degenerate: the address is representable in
     /// the packing, but there is no real geometry behind it (DGGAL's own
@@ -407,58 +552,6 @@ pub trait Topology: sealed::Sealed {
     /// is; `Grid` refuses each of them before it ever asks, and a direct caller cannot tell
     /// them apart from "no override", as with `sub_zone_at_index`.
     fn sub_zone_index(_parent: &Address, _sub: &Address) -> Option<Option<u64>> {
-        None
-    }
-
-    /// The number of cells along the side of a root rhombus at `level`. The zones of a level
-    /// form a lattice: ten root rhombi, 0 to 9, each of `lattice_edge(level)` rows by as many
-    /// columns of cells, and two polar roots, 10 and 11, of one cell each. Taken rhombus by
-    /// rhombus, row by row and cell by cell, and then the two polar roots, the zones those cells
-    /// host are every zone of the level, each once, in the order of DGGAL's `listZones`.
-    ///
-    /// A topology that does not order its zones so leaves this and the three methods below as
-    /// they are: a side of nought, no zone in any cell and no place for any zone, so that a walk
-    /// of its lattice visits nothing. Nought also answers a level beyond the topology's finest.
-    #[doc(hidden)]
-    fn lattice_edge(_level: u8) -> u64 {
-        0
-    }
-
-    /// The zones that the cell at `row` and `col` of the root rhombus `root` (0 to 9) hosts at
-    /// `level`, in the order of DGGAL's `listZones`, each with its key in that order: the keys
-    /// ascend along the walk that [`Topology::lattice_edge`] describes. A key orders the zones
-    /// of one level alone and is not to be compared across levels. Nothing for a cell the
-    /// lattice does not have: a root above 9, a row or a column at or beyond the side, a level
-    /// beyond the finest.
-    #[doc(hidden)]
-    fn cell_zones(_level: u8, _root: u8, _row: u64, _col: u64) -> Vec<(Address, u64)> {
-        Vec::new()
-    }
-
-    /// The zones of the polar root `root`, 10 or 11, at `level`, as [`Topology::cell_zones`]
-    /// gives those of a cell. Nothing for any other root.
-    #[doc(hidden)]
-    fn polar_zones(_level: u8, _root: u8) -> Vec<(Address, u64)> {
-        Vec::new()
-    }
-
-    /// Where the lattice holds the zone `a`: its root, the row and the column of the cell that
-    /// hosts it (both nought under a polar root), and its key, as [`Topology::cell_zones`] and
-    /// [`Topology::polar_zones`] give it. `None` for an address the lattice does not hold.
-    #[doc(hidden)]
-    fn locate(_a: &Address) -> Option<(u8, u64, u64, u64)> {
-        None
-    }
-
-    /// DGGAL's `compactZones` of a set of zones: the zones that stand for the set, a coarser
-    /// zone in place of those of its sub-zones that it alone holds wherever the set has all
-    /// of them, in the engine's order of answer. A zone given twice counts once. `None` for
-    /// a topology that has no compaction.
-    ///
-    /// Every address must satisfy [`Topology::is_valid_address`], and the addresses are meant
-    /// to be of one level; `Grid` checks both before it asks. The cost is that of the slice.
-    #[doc(hidden)]
-    fn compact(_zones: &[Address]) -> Option<Vec<Address>> {
         None
     }
 }

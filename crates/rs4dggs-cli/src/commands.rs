@@ -787,7 +787,8 @@ fn other(grid: &AnyGrid, inv: &Invocation, out: &mut dyn Write) -> Result<(), Fa
                     writeln!(out, "{ts} is sub-zone {i} of {tp}, at depth {depth}")?;
                 }
                 // No more is said than the library knows: along the two broken seams of the
-                // aperture-7 grids an order may hold a zone to which it gives no index.
+                // aperture-7 grids an order may hold a zone that the engine's own test of a
+                // sub-zone refuses, and to which it gives no index.
                 None => writeln!(out, "{ts} has no index among the sub-zones of {tp}")?,
             }
         }

@@ -4,15 +4,14 @@
 //! What needs no engine is tested in every build: the answers for boxes whose zones are known,
 //! the pages, the entry after a zone and the refusals. The comparison with the engine, by its
 //! own extents and by its own answers, is in the module `engine`, under the `oracle` feature.
+use crate::interfaces::sealed::{Private, TopologyPlumbing};
 use rs4dggs::indexings::{I3h, Z7};
 use rs4dggs::topologies::{HexA3, HexA7};
-use rs4dggs::{AnyGrid, Error, Extent, GeoPoint, Indexing, Topology, ZoneId};
+use rs4dggs::{AnyGrid, Error, Extent, GeoPoint, Indexing, ZoneId};
 
-// The boxes of the comparison with the engine; the suites that follow use what this one does not.
+// The boxes of the comparison with the engine, which the oracle suites share.
 #[cfg(feature = "oracle")]
-#[allow(dead_code)]
-#[path = "common/boxes.rs"]
-mod boxes;
+use crate::common::boxes;
 
 const APERTURE_3: [&str; 3] = ["ISEA3H", "IVEA3H", "RTEA3H"];
 const APERTURE_7: [&str; 3] = ["IGEO7", "IVEA7H", "RTEA7H"];
@@ -92,9 +91,9 @@ fn paged(grid: AnyGrid, level: u8, b: &[f64; 4], size: usize, most: usize) -> Ve
 /// The key of a zone in the order of its level, as the lattice gives it.
 fn key(grid: AnyGrid, zone: ZoneId) -> u64 {
     let place = if APERTURE_3.contains(&grid.name()) {
-        HexA3::locate(&I3h::decode(zone))
+        HexA3::locate(Private, &I3h::decode(zone))
     } else {
-        HexA7::locate(&Z7::decode(zone))
+        HexA7::locate(Private, &Z7::decode(zone))
     };
     place
         .unwrap_or_else(|| panic!("{:#018x} is no zone of the lattice", zone.0))
@@ -455,34 +454,23 @@ fn a_level_beyond_the_limit_and_a_box_that_is_none_are_refused() {
         }
         assert_eq!(
             refused(name, 3, &[80.0, 0.0, 90.000001, 10.0]),
-            Some(Error::LatitudeOutOfRange {
-                bits: 90.000001f64.to_bits()
-            })
+            Some(Error::LatitudeOutOfRange { name: "north" })
         );
         assert_eq!(
             refused(name, 3, &[-91.0, 0.0, 10.0, 10.0]),
-            Some(Error::LatitudeOutOfRange {
-                bits: (-91.0f64).to_bits()
-            })
+            Some(Error::LatitudeOutOfRange { name: "south" })
         );
         assert_eq!(
             refused(name, 3, &[10.0, 170.0, 20.0, -181.0]),
-            Some(Error::LongitudeOutOfRange {
-                bits: (-181.0f64).to_bits()
-            })
+            Some(Error::LongitudeOutOfRange { name: "east" })
         );
         assert_eq!(
             refused(name, 3, &[10.0, 180.5, 20.0, 170.0]),
-            Some(Error::LongitudeOutOfRange {
-                bits: 180.5f64.to_bits()
-            })
+            Some(Error::LongitudeOutOfRange { name: "west" })
         );
         assert_eq!(
             refused(name, 3, &[40.0, 10.0, 30.0, 20.0]),
-            Some(Error::InvertedBox {
-                south_bits: 40.0f64.to_bits(),
-                north_bits: 30.0f64.to_bits()
-            })
+            Some(Error::InvertedBox)
         );
         // The level is refused first.
         assert!(matches!(

@@ -258,15 +258,10 @@ fn engine_order(
     let grid = dggrs.grid();
     let count = grid.count_sub_zones(zone, depth).unwrap();
     let positions: Vec<Option<u32>> = (0..count as u32).map(Some).collect();
-    let data = ZoneData {
-        dggrs,
-        zone,
-        depths: &[depth],
-        properties: &[Property {
-            name: "i",
-            depths: &[Values::U32(&positions)],
-        }],
-    };
+    let values = [Values::U32(&positions)];
+    let properties = [Property::new("i", &values)];
+    let depths = [depth];
+    let data = ZoneData::new(dggrs, zone, &depths, &properties);
     // A number of its own for each document, since tests that run at once may ask for one zone.
     static DOCUMENTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = DOCUMENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -394,7 +389,7 @@ fn the_region_of_a_zone_is_the_ring_dgg_draws() {
             let mut out = Vec::new();
             let region = ZoneGeometry::Region { edge_refinement: 0 };
             // The shortest exact form, so that the comparison is of the library's own doubles.
-            let shortest = Coordinates { decimals: None };
+            let shortest = Coordinates::shortest();
             let drawn = write_zone_geometry(&mut out, grid, zone, region, shortest).unwrap();
             assert!(drawn, "{name} {text}");
             let ours = String::from_utf8(out).unwrap();
@@ -448,15 +443,10 @@ fn geojson_features(
     };
     let count = dggrs.grid().count_sub_zones(zone, depth).unwrap();
     let positions: Vec<Option<u32>> = (0..count as u32).map(Some).collect();
-    let data = ZoneData {
-        dggrs,
-        zone,
-        depths: &[depth],
-        properties: &[Property {
-            name: "i",
-            depths: &[Values::U32(&positions)],
-        }],
-    };
+    let values = [Values::U32(&positions)];
+    let properties = [Property::new("i", &values)];
+    let depths = [depth];
+    let data = ZoneData::new(dggrs, zone, &depths, &properties);
     let mut out = Vec::new();
     write_zone_data_geojson(&mut out, &data, ZoneGeometry::None, Coordinates::default()).unwrap();
     let doc = String::from_utf8(out).unwrap();

@@ -100,6 +100,7 @@ use crate::fivebysix::{
     Crossing, add_intermediate_points, cvtt_i32, move5x6_vertex, move5x6_vertex2, sgn,
 };
 use crate::interfaces::Topology;
+use crate::interfaces::sealed::{Private, TopologyPlumbing};
 use crate::math;
 use crate::types::{Address, PlanarPoint};
 
@@ -4118,18 +4119,21 @@ impl Topology for HexA7 {
     /// `getSubZoneIndex` (`RI7H_Z7.ec:599-602`, `RI7H.ec:224-239`): the zone must pass the
     /// engine's test of a sub-zone, `zoneHasSubZone` (`RI7H.ec:258-308`), and the index is that
     /// of the first centroid of the order, generated from its head, that lies within 1e-11 of
-    /// the zone's own in each coordinate. `Some(None)` where the test refuses the zone or no
-    /// centroid lies so near, which in the broken seams happens to zones that the order names.
+    /// the zone's own in each coordinate. That index is answered where the entry of the order
+    /// there is `sub`. Where the test accepts the zone and no centroid lies so near, or the
+    /// order holds another zone at the walk's index, which happens in the broken seams, `sub` is
+    /// sought in the order itself, generated entry by entry, and its first place is the index,
+    /// or `Some(None)` where the order does not hold it. Where the test refuses the zone the
+    /// answer is `Some(None)`, as the engine's -1.
     ///
-    /// The walk compares centroids, and the order holds the zones that the quantiser makes of
-    /// them: `Grid` answers the index only where the entry of the order there is `sub`.
-    ///
-    /// Two departures from the engine, both the crate's own rule at `Grid`: of two zones of
-    /// one level a zone is its own sub-zone at index 0 and no other is, where the engine
-    /// answers 0 for any two; and the walk is not made over an order longer than
-    /// [`crate::grid::max_materialised_sub_zones`], since it costs one centroid for each entry
-    /// before the one sought. `None` there, for an address that fails
-    /// [`HexA7::is_valid_address`], and for a `sub` beyond level 19.
+    /// Three departures from the engine: the search in the order, where the engine answers -1
+    /// or the index of another zone for a zone that its test accepts; and two of the crate's
+    /// own rule at `Grid`: of two zones of one level a zone is its own sub-zone at index 0 and
+    /// no other is, where the engine answers 0 for any two; and the walk is not made over an
+    /// order longer than [`crate::grid::max_materialised_sub_zones`], since it costs one
+    /// centroid for each entry before the one sought, and the search a quantisation for each.
+    /// `None` there, for an address that fails [`HexA7::is_valid_address`], and for a `sub`
+    /// beyond level 19.
     fn sub_zone_index(parent: &Address, sub: &Address) -> Option<Option<u64>> {
         hex_a7_subzones::sub_zone_index(parent, sub)
     }
@@ -4220,58 +4224,17 @@ impl Topology for HexA7 {
             })
             .collect()
     }
+}
 
+impl TopologyPlumbing for HexA7 {
     /// The ring of [`HexA7::planar_refined_ring`] as `getRefinedVertices` asks it of the zone
     /// for WGS84, with `crs84` true (`RI7H.ec:544`).
-    fn planar_refined_vertices(a: &Address, n_divisions: i32) -> Option<Vec<(f64, f64)>> {
+    fn planar_refined_vertices(
+        _: Private,
+        a: &Address,
+        n_divisions: i32,
+    ) -> Option<Vec<(f64, f64)>> {
         Some(Self::planar_refined_ring(a, true, n_divisions))
-    }
-
-    /// `7^(level / 2)` cells along a rhombus: the grid of the even level at or below `level`,
-    /// whose index within a rhombus is `row * 7^levelI49R + col` (`RI7H.ec:866-871`). Nought
-    /// beyond level 19.
-    fn lattice_edge(level: u8) -> u64 {
-        if usize::from(level) >= NULL_GEOMETRY_LEVEL {
-            return 0;
-        }
-        pow7(i64::from(level / 2)) as u64
-    }
-
-    /// The zones of one cell of a rhombus: one at an even level; at an odd level its seven
-    /// sub-hexagons, or six in the cell at row 0 and column 0, which is a pentagon's
-    /// (`RI7H.ec:866-871`). Each comes with the value of its `I7HZone`, the key of the engine's
-    /// order, which is not that of the Z7 identifiers: see `i7h_value`.
-    fn cell_zones(level: u8, root: u8, row: u64, col: u64) -> Vec<(Address, u64)> {
-        let p = Self::lattice_edge(level);
-        if root > 9 || row >= p || col >= p {
-            return Vec::new();
-        }
-        lattice_cell(level, root, row, col)
-    }
-
-    /// The zones of a polar root: the polar pentagon at an even level, its six sub-hexagons at
-    /// an odd one, the roots 10 and 11 of `rootRhombus` (`RI7H.ec:866-871`).
-    fn polar_zones(level: u8, root: u8) -> Vec<(Address, u64)> {
-        if usize::from(level) >= NULL_GEOMETRY_LEVEL || !(10..=11).contains(&root) {
-            return Vec::new();
-        }
-        lattice_cell(level, root, 0, 0)
-    }
-
-    /// The root, the row and the column of the I7H zone that the address reads to, as the eC's
-    /// `to7H` reads it (`RI7H_Z7.ec:298-370`), and the value of that zone.
-    ///
-    /// `None` for an address that [`HexA7::is_valid_address`] refuses, for one of twenty digits,
-    /// for one that names the child a pentagon does not have, and for any other that the cell it
-    /// reads to does not host under that address: an answer is given exactly where
-    /// `cell_zones` or `polar_zones` at the place answered holds `a`.
-    fn locate(a: &Address) -> Option<(u8, u64, u64, u64)> {
-        if !Self::is_valid_address(a) || Self::is_null_geometry(a) {
-            return None;
-        }
-        let z = zone_from_steps(a.base, a.digits());
-        let (hosted, key) = lattice_zone(a.len() as u8, z)?;
-        (hosted == *a).then_some((z.root as u8, z.row as u64, z.col as u64, key))
     }
 
     /// The engine's `compactZones` on these grids (`RI7H_Z7.ec:581-597`): each zone taken to
@@ -4292,7 +4255,7 @@ impl Topology for HexA7 {
     /// own centroid, and at no set made of zones found from positions. Two zones are besides
     /// beyond the grid, the last two of the twelve that the short cut of that function builds,
     /// which the engine converts to its null zone and no set of one level reaches.
-    fn compact(zones: &[Address]) -> Option<Vec<Address>> {
+    fn compact(_: Private, zones: &[Address]) -> Option<Vec<Address>> {
         let zones: Vec<Z> = zones
             .iter()
             .filter(|a| !Self::is_null_geometry(a))
@@ -4304,6 +4267,53 @@ impl Topology for HexA7 {
                 .filter_map(|z| Some(z7_address(from_7h(z)?, zone_level(z))))
                 .collect(),
         )
+    }
+
+    /// `7^(level / 2)` cells along a rhombus: the grid of the even level at or below `level`,
+    /// whose index within a rhombus is `row * 7^levelI49R + col` (`RI7H.ec:866-871`). Nought
+    /// beyond level 19.
+    fn lattice_edge(_: Private, level: u8) -> u64 {
+        if usize::from(level) >= NULL_GEOMETRY_LEVEL {
+            return 0;
+        }
+        pow7(i64::from(level / 2)) as u64
+    }
+
+    /// The zones of one cell of a rhombus: one at an even level; at an odd level its seven
+    /// sub-hexagons, or six in the cell at row 0 and column 0, which is a pentagon's
+    /// (`RI7H.ec:866-871`). Each comes with the value of its `I7HZone`, the key of the engine's
+    /// order, which is not that of the Z7 identifiers: see `i7h_value`.
+    fn cell_zones(_: Private, level: u8, root: u8, row: u64, col: u64) -> Vec<(Address, u64)> {
+        let p = Self::lattice_edge(Private, level);
+        if root > 9 || row >= p || col >= p {
+            return Vec::new();
+        }
+        lattice_cell(level, root, row, col)
+    }
+
+    /// The zones of a polar root: the polar pentagon at an even level, its six sub-hexagons at
+    /// an odd one, the roots 10 and 11 of `rootRhombus` (`RI7H.ec:866-871`).
+    fn polar_zones(_: Private, level: u8, root: u8) -> Vec<(Address, u64)> {
+        if usize::from(level) >= NULL_GEOMETRY_LEVEL || !(10..=11).contains(&root) {
+            return Vec::new();
+        }
+        lattice_cell(level, root, 0, 0)
+    }
+
+    /// The root, the row and the column of the I7H zone that the address reads to, as the eC's
+    /// `to7H` reads it (`RI7H_Z7.ec:298-370`), and the value of that zone.
+    ///
+    /// `None` for an address that [`HexA7::is_valid_address`] refuses, for one of twenty digits,
+    /// for one that names the child a pentagon does not have, and for any other that the cell it
+    /// reads to does not host under that address: an answer is given exactly where
+    /// `cell_zones` or `polar_zones` at the place answered holds `a`.
+    fn locate(_: Private, a: &Address) -> Option<(u8, u64, u64, u64)> {
+        if !Self::is_valid_address(a) || Self::is_null_geometry(a) {
+            return None;
+        }
+        let z = zone_from_steps(a.base, a.digits());
+        let (hosted, key) = lattice_zone(a.len() as u8, z)?;
+        (hosted == *a).then_some((z.root as u8, z.row as u64, z.col as u64, key))
     }
 }
 
@@ -6930,7 +6940,7 @@ mod tests {
             Address::new(text[..2].parse().unwrap(), &digits)
         }
         fn compacted(set: &[Address]) -> String {
-            let answer = HexA7::compact(set).unwrap();
+            let answer = HexA7::compact(Private, set).unwrap();
             let texts: Vec<String> = answer.iter().map(|a| Z7::to_text(Z7::encode(a))).collect();
             texts.join(" ")
         }
@@ -6994,7 +7004,7 @@ mod tests {
 
         // No zone gives no zone; a zone given twice counts once; an address of twenty digits,
         // which the engine reads as its null zone, is left out of the set.
-        assert_eq!(HexA7::compact(&[]), Some(Vec::new()));
+        assert_eq!(HexA7::compact(Private, &[]), Some(Vec::new()));
         assert_eq!(compacted(&of("0064 0064 00")), "0064");
         assert_eq!(
             compacted(&[address("0064"), Address::new(0, &[0; 20])]),

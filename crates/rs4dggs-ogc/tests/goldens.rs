@@ -71,30 +71,17 @@ const ISEA3H_LEVEL_1: [&str; 32] = [
 
 /// The links and the template the golden of level 1 carries.
 const LEVEL_1_LINKS: [Link<'static>; 3] = [
-    Link {
-        rel: rel::DGGRS,
-        href: "/collections/gebco/dggs/ISEA3H",
-        title: Some("ISEA3H DGGS for GEBCO"),
-        media_type: None,
-    },
-    Link {
-        rel: rel::DGGRS_DEFINITION,
-        href: "/dggrs/ISEA3H",
-        title: Some("ISEA3H DGGRS definition"),
-        media_type: Some("application/json"),
-    },
-    Link {
-        rel: rel::GEODATA,
-        href: "/collections/gebco",
-        title: None,
-        media_type: None,
-    },
+    Link::new(rel::DGGRS, "/collections/gebco/dggs/ISEA3H").with_title("ISEA3H DGGS for GEBCO"),
+    Link::new(rel::DGGRS_DEFINITION, "/dggrs/ISEA3H")
+        .with_title("ISEA3H DGGRS definition")
+        .with_media_type("application/json"),
+    Link::new(rel::GEODATA, "/collections/gebco"),
 ];
-const LEVEL_1_TEMPLATES: [LinkTemplate<'static>; 1] = [LinkTemplate {
-    rel: rel::DGGRS_ZONE_DATA,
-    uri_template: "/collections/gebco/dggs/ISEA3H/zones/{zoneId}/data",
-    title: Some("ISEA3H data for GEBCO"),
-}];
+const LEVEL_1_TEMPLATES: [LinkTemplate<'static>; 1] = [LinkTemplate::new(
+    rel::DGGRS_ZONE_DATA,
+    "/collections/gebco/dggs/ISEA3H/zones/{zoneId}/data",
+)
+.with_title("ISEA3H data for GEBCO")];
 
 fn list(grid: AnyGrid, zones: &[ZoneId], area: f64, links: &[Link], t: &[LinkTemplate]) -> Vec<u8> {
     let mut out = Vec::new();
@@ -116,18 +103,8 @@ fn two_zones_of_isea3h_with_their_area_and_the_two_links_required() {
     let area = area(grid, &zones);
     assert_eq!(area, 31170676883138.758);
     let links = [
-        Link {
-            rel: rel::DGGRS,
-            href: "/dggs/ISEA3H",
-            title: None,
-            media_type: None,
-        },
-        Link {
-            rel: rel::DGGRS_DEFINITION,
-            href: "/dggrs/ISEA3H",
-            title: None,
-            media_type: None,
-        },
+        Link::new(rel::DGGRS, "/dggs/ISEA3H"),
+        Link::new(rel::DGGRS_DEFINITION, "/dggrs/ISEA3H"),
     ];
     assert_golden(
         "zones-ISEA3H-two.json",
@@ -199,7 +176,13 @@ const REGION: ZoneGeometry = ZoneGeometry::Region { edge_refinement: 0 };
 
 /// The coordinates in their shortest exact form, so that the documents hold the library's own
 /// doubles.
-const SHORTEST: Coordinates = Coordinates { decimals: None };
+const SHORTEST: Coordinates = Coordinates::shortest();
+
+/// The counts of a list written: its features, those without geometry, and the null zones
+/// passed over.
+fn counts(w: Written) -> (u64, u64, u64) {
+    (w.features, w.without_geometry, w.null_zones_skipped)
+}
 
 /// The zones of `grid` named by `texts` as a GeoJSON list, the features numbered from 1, with
 /// the coordinates in their shortest exact form.
@@ -296,19 +279,10 @@ fn f64_band(missing_third: bool) -> Vec<u8> {
         band[2] = None;
     }
     let mut out = Vec::new();
-    write_dggs_ubjson(
-        &mut out,
-        &ZoneData {
-            dggrs,
-            zone: dggrs.grid().zone_from_text("C2-23-C").unwrap(),
-            depths: &[1],
-            properties: &[Property {
-                name: "i",
-                depths: &[Values::F64(&band)],
-            }],
-        },
-    )
-    .unwrap();
+    let zone = dggrs.grid().zone_from_text("C2-23-C").unwrap();
+    let values = [Values::F64(&band)];
+    let properties = [Property::new("i", &values)];
+    write_dggs_ubjson(&mut out, &ZoneData::new(dggrs, zone, &[1], &properties)).unwrap();
     out
 }
 
@@ -390,26 +364,14 @@ fn zone_data_of_c2_23_c_as_geojson_with_centroids() {
         Some(-3.0),
         Some(1000.0),
     ];
-    let data = ZoneData {
-        dggrs,
-        zone: dggrs.grid().zone_from_text("C2-23-C").unwrap(),
-        depths: &[1],
-        properties: &[Property {
-            name: "Elevation",
-            depths: &[Values::F64(&elevation)],
-        }],
-    };
+    let zone = dggrs.grid().zone_from_text("C2-23-C").unwrap();
+    let values = [Values::F64(&elevation)];
+    let properties = [Property::new("Elevation", &values)];
+    let data = ZoneData::new(dggrs, zone, &[1], &properties);
     let mut out = Vec::new();
     let written =
         write_zone_data_geojson(&mut out, &data, ZoneGeometry::Centroid, SHORTEST).unwrap();
-    assert_eq!(
-        written,
-        Written {
-            features: 7,
-            without_geometry: 0,
-            null_zones_skipped: 0
-        }
-    );
+    assert_eq!(counts(written), (7, 0, 0));
     assert_golden("data-ISEA3H-C2-23-C-depth1.centroids.geojson", &out);
     let doc = String::from_utf8(out).unwrap();
     assert_eq!(doc.matches(r#""geometry":{"type":"Point","#).count(), 7);
@@ -431,15 +393,7 @@ fn zone_data_as_geojson_without_geometry_is_each_golden() {
         let written =
             write_zone_data_geojson(&mut out, data, ZoneGeometry::None, Coordinates::default())
                 .unwrap();
-        assert_eq!(
-            written,
-            Written {
-                features,
-                without_geometry: features,
-                null_zones_skipped: skipped
-            },
-            "{name}"
-        );
+        assert_eq!(counts(written), (features, features, skipped), "{name}");
         assert_golden(&name.replace(".json", ".none.geojson"), &out);
         let doc = String::from_utf8(out).unwrap();
         assert_eq!(feature_ids(&doc), (1..=features).collect::<Vec<_>>());

@@ -29,3 +29,44 @@ pub use registry::{
 pub use types::{Address, Extent, GeoPoint, GridConfig, NULL_TEXT, PlanarPoint, ZoneId};
 pub use zone::Zone;
 pub use zones::{Zones, ZonesInBox};
+
+// The suites that ask the crate's own trait methods, which no code outside the crate can reach,
+// run as modules of the library's own tests. Their files stay under `tests/`, and each names the
+// crate `rs4dggs`, as code outside it would.
+#[cfg(test)]
+extern crate self as rs4dggs;
+#[cfg(test)]
+#[path = "../tests/compact_zones.rs"]
+mod compact_zones_suite;
+#[cfg(test)]
+#[path = "../tests/lattice.rs"]
+mod lattice_suite;
+#[cfg(test)]
+#[path = "../tests/zones_in_box.rs"]
+mod zones_in_box_suite;
+#[cfg(test)]
+#[path = "../tests/zones.rs"]
+mod zones_suite;
+
+// The oracle suites, one for each grid, and what they share.
+#[cfg(all(test, feature = "oracle"))]
+#[path = "../tests/common/mod.rs"]
+mod common;
+#[cfg(all(test, feature = "oracle"))]
+#[path = "../tests/oracle_igeo7.rs"]
+mod oracle_igeo7;
+#[cfg(all(test, feature = "oracle"))]
+#[path = "../tests/oracle_isea3h.rs"]
+mod oracle_isea3h;
+#[cfg(all(test, feature = "oracle"))]
+#[path = "../tests/oracle_ivea3h.rs"]
+mod oracle_ivea3h;
+#[cfg(all(test, feature = "oracle"))]
+#[path = "../tests/oracle_ivea7h.rs"]
+mod oracle_ivea7h;
+#[cfg(all(test, feature = "oracle"))]
+#[path = "../tests/oracle_rtea3h.rs"]
+mod oracle_rtea3h;
+#[cfg(all(test, feature = "oracle"))]
+#[path = "../tests/oracle_rtea7h.rs"]
+mod oracle_rtea7h;

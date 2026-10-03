@@ -751,23 +751,20 @@ fn rel_follows_the_hierarchy_of_the_grid_on_aperture_7() {
         out.contains("00641565463601 and 00641565463602 are siblings\n"),
         "{out}"
     );
-    // On a broken seam an order may hold a zone to which the library gives no index: `index`
-    // says no more than that, and `rel` leaves the index unsaid.
+    // On a broken seam the engine's walk gives the index of another zone, and the library
+    // finds the sub-zone in the order itself: `index` and `rel` both state its place.
     let (zone, sub) = ("00000000000000000", "000000000000000001");
     let (_, out, _) = run(&["igeo7", "sub", zone], "");
     assert!(out.contains(&format!("      3  {sub}\n")), "{out}");
     let (code, out, _) = run(&["igeo7", "index", zone, sub], "");
     assert_eq!(
         (code, out),
-        (
-            0,
-            format!("{sub} has no index among the sub-zones of {zone}\n")
-        )
+        (0, format!("{sub} is sub-zone 3 of {zone}, at depth 1\n"))
     );
     let (_, out, _) = run(&["igeo7", "rel", zone, sub], "");
     assert!(
         out.contains(&format!("{zone} is an immediate parent of {sub}\n"))
-            && !out.contains("sub-zone"),
+            && out.contains(&format!("{sub} is sub-zone 3 of {zone}, at depth 1\n")),
         "{out}"
     );
     // Where the order is longer than the library lists, the index is left unsaid as well.

@@ -2933,13 +2933,14 @@ fn engine_parent_and_children<S: Subject>(
 /// The null zone is refused as an invalid zone, before its depth is looked at, by
 /// `sub_zone_index` as by the others.
 ///
-/// `sub_zone_index` of the first child of every zone is the engine's `getSubZoneIndex`,
-/// asked live, and the order holds the child at it. It is the child's place in the order
-/// at every zone whose children lie coarser than level 15. From level 15 the engine's walk
-/// may find no index for a child that its order names, and then there is none here, or
-/// answer an index at which its order holds another zone, where there is none here either:
-/// both are counted exactly, per grid, and each such zone is held to the band about the
-/// broken seams.
+/// `sub_zone_index` of the first child of every zone is its place in the order, where the
+/// order holds it, and none where it does not; and it is the engine's `getSubZoneIndex`,
+/// asked live, at every zone whose children lie coarser than level 15. From level 15 the
+/// engine's walk may find no index for a child that its order names, which has none here
+/// where the engine's test of a sub-zone refuses it and its place where the test accepts it,
+/// or answer an index at which its order holds another zone, where the place found here
+/// departs from it: each is counted exactly, per grid, and each such zone is held to the
+/// band about the broken seams.
 ///
 /// `sub_zone_index` of two different zones at one level is a characterised divergence,
 /// re-checked live at every zone of the sample that has a neighbour: the engine answers
@@ -2957,9 +2958,10 @@ pub fn sub_zones_at_depth_1_as_the_engine_lists_them<S: Subject<T = HexA7, I = Z
     // null zone; and the zones of the finest resolution, which have no order below them.
     let mut orders = Floor::new("sub-zone orders at depth 1", 900);
     let (mut entries, mut null_entries, mut finest) = (0usize, 0usize, 0usize);
-    // The first children that the order names and that have no index, as in the engine;
-    // and those for which the engine answers the place of another zone, with none here.
-    let (mut no_index, mut index_of_another) = (0usize, 0usize);
+    // The first children that the order names and for which the engine finds no index, which
+    // have none here where its test of a sub-zone refuses them and their place where it
+    // accepts them; and those for which the engine answers the place of another zone.
+    let (mut no_index, mut found_without_index, mut index_of_another) = (0usize, 0usize, 0usize);
     let g = S::grid();
     for id in zones::<S>()
         .into_iter()
@@ -3070,46 +3072,67 @@ pub fn sub_zones_at_depth_1_as_the_engine_lists_them<S: Subject<T = HexA7, I = Z
             }
         }
         if let Some(c) = z.children().first() {
-            // The index of a child is the engine's, and the order holds the child at it:
-            // its place in the order, the first where the order names it twice. Where
-            // there is none, the order does not hold the child and the engine finds none
-            // either; or, in the broken seams, the engine finds none for a child that its
-            // order names, or answers the place of another zone.
+            // The index of a child that the order holds is its place in the order, the first
+            // where the order names it twice: the engine's, or, in the broken seams, where
+            // the engine finds none for a child that its order names or answers the place of
+            // another zone, the place found in the order itself, save where the engine's test
+            // of a sub-zone refuses the child, which has none, as in the engine. A child that
+            // the order does not hold has none, and the engine finds none either, or, in the
+            // broken seams, answers the place of another zone.
             let place = order.iter().position(|&s| s == c.id()).map(|i| i as u64);
             let engine = o::sub_zone_index(S::ORACLE, id.0, c.id().0);
             let ct = c.text_id();
-            match z.sub_zone_index(c) {
-                Ok(Some(i)) => assert_eq!(
-                    (Some(i), i as i64),
-                    (place, engine),
-                    "sub_zone_index of {ct}, the first child of {text}, against its place in \
-                     the order and against the engine's"
-                ),
-                Ok(None) => {
-                    if engine == -1 {
-                        no_index += usize::from(place.is_some());
-                    } else {
-                        assert_ne!(
-                            usize::try_from(engine).ok().and_then(|i| order.get(i)),
-                            Some(&c.id()),
-                            "sub_zone_index of {ct}, the first child of {text}, is none, and \
-                             the engine's is {engine}, where the order holds the child"
-                        );
-                        index_of_another += 1;
+            let index = z.sub_zone_index(c);
+            match index {
+                Ok(Some(i)) => {
+                    assert_eq!(
+                        Some(i),
+                        place,
+                        "sub_zone_index of {ct}, the first child of {text}, against its place \
+                         in the order"
+                    );
+                    if i as i64 != engine {
+                        if engine == -1 {
+                            found_without_index += 1;
+                        } else {
+                            assert_ne!(
+                                usize::try_from(engine).ok().and_then(|i| order.get(i)),
+                                Some(&c.id()),
+                                "sub_zone_index of {ct}, the first child of {text}, is {i}, \
+                                 and the engine's is {engine}, where the order holds the child"
+                            );
+                            index_of_another += 1;
+                        }
                     }
-                    if place.is_some() || engine != -1 {
-                        let centre = g.centroid(id);
-                        assert!(
-                            c.resolution() >= 15
-                                && div::near_broken_seam::<S>(centre.lat, centre.lon),
-                            "{ct}, the first child of {text}, has no index: the engine's is \
-                             {engine}, the order holds it at {place:?}, and the zone lies \
-                             {:e} degrees from the broken seams (seed {SEED:#x})",
-                            broken_seam_distance_deg::<S>(centre.lat, centre.lon)
+                }
+                Ok(None) => {
+                    if place.is_some() {
+                        // An entry that the engine's own test of a sub-zone refuses.
+                        assert_eq!(
+                            engine, -1,
+                            "sub_zone_index of {ct}, the first child of {text}, is none, and the \
+                             order holds it"
                         );
+                        no_index += 1;
+                    } else if engine != -1 {
+                        index_of_another += 1;
                     }
                 }
                 Err(e) => panic!("sub_zone_index of {ct}, the first child of {text}: {e}"),
+            }
+            // Where the answer here is not the engine's, the zone lies in the broken seams.
+            if index
+                .as_ref()
+                .is_ok_and(|i| i.map_or(-1, |i| i as i64) != engine)
+            {
+                let centre = g.centroid(id);
+                assert!(
+                    c.resolution() >= 15 && div::near_broken_seam::<S>(centre.lat, centre.lon),
+                    "{ct}, the first child of {text}, has the index {index:?} here and {engine} \
+                     in the engine, the order holds it at {place:?}, and the zone lies {:e} \
+                     degrees from the broken seams (seed {SEED:#x})",
+                    broken_seam_distance_deg::<S>(centre.lat, centre.lon)
+                );
             }
             children_checked += 1;
         }
@@ -3180,19 +3203,21 @@ pub fn sub_zones_at_depth_1_as_the_engine_lists_them<S: Subject<T = HexA7, I = Z
     eprintln!(
         "sub-zones: {} orders at depth 1 as the engine's, {entries} entries, {null_entries} of \
          them the null zone; {finest} zones of the finest resolution refused; {no_index} first \
-         children that the order names have no index, as in the engine, and {index_of_another} \
-         have none where the engine answers the place of another zone",
+         children that the order names have no index, as in the engine, \
+         {found_without_index} have none in the engine and their place here, and \
+         {index_of_another} have the place of another zone in the engine",
         orders.n
     );
     // Held exactly, per grid, so that the reading of the engine's null zone and of an
     // identifier it cannot read back as the null zone cannot fall silent: the orders, their
     // entries, the entries that are the null zone, and the zones of the finest resolution;
-    // and, of the first children, those that have no index as in the engine, and those
-    // that have none where the engine answers the place of another zone.
+    // and, of the first children, those without an index as in the engine, those without one
+    // in the engine and with their place here, and those for which the engine answers the
+    // place of another zone.
     let recorded = match S::NAME {
-        "IGEO7" => [1_046, 13_530, 31, 76, 0, 0],
-        "IVEA7H" => [1_021, 13_203, 27, 95, 0, 1],
-        "RTEA7H" => [1_021, 13_207, 27, 94, 0, 1],
+        "IGEO7" => [1_046, 13_530, 31, 76, 0, 0, 0],
+        "IVEA7H" => [1_021, 13_203, 27, 95, 0, 0, 1],
+        "RTEA7H" => [1_021, 13_207, 27, 94, 0, 0, 1],
         other => panic!(
             "nothing is recorded of the sub-zone orders of {other} at depth 1: the counts \
              printed above are what this run met"
@@ -3205,13 +3230,15 @@ pub fn sub_zones_at_depth_1_as_the_engine_lists_them<S: Subject<T = HexA7, I = Z
             null_entries,
             finest,
             no_index,
+            found_without_index,
             index_of_another
         ],
         recorded,
         "the orders at depth 1, their entries, the entries that are the null zone, the zones \
-         of the finest resolution, the first children without an index as in the engine, and \
-         those without one where the engine answers the place of another zone, against what \
-         is recorded of the grid (seed {SEED:#x})"
+         of the finest resolution, the first children without an index, as in the engine, those \
+         without one in the engine and with their place here, and those for which the engine \
+         answers the place of another zone, against what is recorded of the grid (seed \
+         {SEED:#x})"
     );
 }
 

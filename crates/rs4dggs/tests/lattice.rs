@@ -4,6 +4,7 @@
 //!
 //! What needs no engine is tested in every build; the comparison with the engine's own list is
 //! in the module `engine`, under the `oracle` feature.
+use crate::interfaces::sealed::{Private, TopologyPlumbing};
 use rs4dggs::indexings::{I3h, Z7};
 use rs4dggs::topologies::{HexA3, HexA7};
 use rs4dggs::{Address, Indexing, Topology};
@@ -15,17 +16,20 @@ type Hosted = Vec<(Address, u64)>;
 
 /// The cells of the lattice of `level` in the order of the walk, each with the zones it hosts.
 fn cells<T: Topology>(level: u8) -> Vec<(Cell, Hosted)> {
-    let edge = T::lattice_edge(level);
+    let edge = T::lattice_edge(Private, level);
     let mut out = Vec::new();
     for root in 0..10 {
         for row in 0..edge {
             for col in 0..edge {
-                out.push(((root, row, col), T::cell_zones(level, root, row, col)));
+                out.push((
+                    (root, row, col),
+                    T::cell_zones(Private, level, root, row, col),
+                ));
             }
         }
     }
     for root in 10..12 {
-        out.push(((root, 0, 0), T::polar_zones(level, root)));
+        out.push(((root, 0, 0), T::polar_zones(Private, level, root)));
     }
     out
 }
@@ -45,7 +49,7 @@ fn every_zone_is_located_in_its_own_cell<T: Topology>(level: u8) -> usize {
     for (cell, hosted) in cells::<T>(level) {
         for (a, key) in &hosted {
             assert_eq!(
-                T::locate(a),
+                T::locate(Private, a),
                 Some((cell.0, cell.1, cell.2, *key)),
                 "level {level}, {a:?} of the cell {cell:?}"
             );
@@ -63,13 +67,13 @@ fn every_zone_is_located_in_its_own_cell<T: Topology>(level: u8) -> usize {
 /// How many times the cell in which `a` is located holds `a`: nought where it is located
 /// nowhere, and one for a zone of the lattice.
 fn times_hosted<T: Topology>(level: u8, a: &Address) -> usize {
-    let Some((root, row, col, key)) = T::locate(a) else {
+    let Some((root, row, col, key)) = T::locate(Private, a) else {
         return 0;
     };
     let hosted = if root < 10 {
-        T::cell_zones(level, root, row, col)
+        T::cell_zones(Private, level, root, row, col)
     } else {
-        T::polar_zones(level, root)
+        T::polar_zones(Private, level, root)
     };
     hosted.iter().filter(|(b, k)| b == a && *k == key).count()
 }
@@ -100,18 +104,19 @@ fn the_aperture_3_lattice_ascends_and_holds_as_many_zones_as_the_level_has() {
 fn the_aperture_3_lattice_counts_the_zones_of_every_level() {
     let grid = rs4dggs::isea3h();
     for level in 0..=I3h::MAX_RESOLUTION {
-        let edge = HexA3::lattice_edge(level);
+        let edge = HexA3::lattice_edge(Private, level);
         let per_cell = if level % 2 == 0 { 1 } else { 3 };
         for (row, col) in [(0, 0), (edge - 1, 0), (0, edge - 1), (edge / 2, edge / 3)] {
             for root in 0..10 {
                 assert_eq!(
-                    HexA3::cell_zones(level, root, row, col).len(),
+                    HexA3::cell_zones(Private, level, root, row, col).len(),
                     per_cell,
                     "level {level}, root {root}, row {row}, column {col}"
                 );
             }
         }
-        let polar = HexA3::polar_zones(level, 10).len() + HexA3::polar_zones(level, 11).len();
+        let polar = HexA3::polar_zones(Private, level, 10).len()
+            + HexA3::polar_zones(Private, level, 11).len();
         assert_eq!(polar, 2, "level {level}");
         assert_eq!(
             10 * edge * edge * per_cell as u64 + polar as u64,
@@ -134,12 +139,12 @@ fn an_aperture_3_zone_is_located_in_the_cell_that_hosts_it() {
         (0..=6).map(|l| 10 * 3usize.pow(l) + 2).sum::<usize>()
     );
     for level in [32, 33] {
-        let last = HexA3::lattice_edge(level) - 1;
+        let last = HexA3::lattice_edge(Private, level) - 1;
         for (root, row, col) in [(0, 0, 0), (9, last, last), (4, last, 0), (5, 1, last)] {
-            let hosted = HexA3::cell_zones(level, root, row, col);
+            let hosted = HexA3::cell_zones(Private, level, root, row, col);
             assert!(!hosted.is_empty());
             for (a, key) in hosted {
-                assert_eq!(HexA3::locate(&a), Some((root, row, col, key)));
+                assert_eq!(HexA3::locate(Private, &a), Some((root, row, col, key)));
             }
         }
     }
@@ -150,11 +155,11 @@ fn an_aperture_3_zone_is_located_in_the_cell_that_hosts_it() {
 #[test]
 fn the_aperture_3_lattice_answers_nothing_outside_itself() {
     for level in [34, 35, 66, 255] {
-        assert_eq!(HexA3::lattice_edge(level), 0, "level {level}");
-        assert!(HexA3::cell_zones(level, 0, 0, 0).is_empty());
-        assert!(HexA3::polar_zones(level, 10).is_empty());
+        assert_eq!(HexA3::lattice_edge(Private, level), 0, "level {level}");
+        assert!(HexA3::cell_zones(Private, level, 0, 0, 0).is_empty());
+        assert!(HexA3::polar_zones(Private, level, 10).is_empty());
     }
-    let edge = HexA3::lattice_edge(5);
+    let edge = HexA3::lattice_edge(Private, 5);
     assert_eq!(edge, 9);
     for (root, row, col) in [
         (10, 0, 0),
@@ -167,12 +172,15 @@ fn the_aperture_3_lattice_answers_nothing_outside_itself() {
         (0, 0, u64::MAX),
     ] {
         assert!(
-            HexA3::cell_zones(5, root, row, col).is_empty(),
+            HexA3::cell_zones(Private, 5, root, row, col).is_empty(),
             "{root} {row} {col}"
         );
     }
     for root in [0, 9, 12, 255] {
-        assert!(HexA3::polar_zones(5, root).is_empty(), "root {root}");
+        assert!(
+            HexA3::polar_zones(Private, 5, root).is_empty(),
+            "root {root}"
+        );
     }
     // The null zone, the sub-hexagon C of a polar root, a polar root with an index, an index
     // beyond the rhombus, a level beyond the finest, and an identifier with its top bit set.
@@ -184,7 +192,11 @@ fn the_aperture_3_lattice_answers_nothing_outside_itself() {
         17 << 57,
         1 << 63,
     ] {
-        assert_eq!(HexA3::locate(&Address::new(id, &[])), None, "{id:#x}");
+        assert_eq!(
+            HexA3::locate(Private, &Address::new(id, &[])),
+            None,
+            "{id:#x}"
+        );
     }
 }
 
@@ -248,12 +260,12 @@ fn the_aperture_7_lattice_ascends_and_holds_every_zone_of_the_level_once() {
 fn the_regular_cells_of_the_aperture_7_lattice_host_what_the_count_of_a_level_assumes() {
     let grid = rs4dggs::igeo7();
     for level in 0..=Z7::MAX_RESOLUTION {
-        let edge = HexA7::lattice_edge(level);
+        let edge = HexA7::lattice_edge(Private, level);
         assert_eq!(edge, 7u64.pow(u32::from(level / 2)), "level {level}");
         let (per_cell, per_pentagon) = if level % 2 == 1 { (7, 6) } else { (1, 1) };
         for root in 0..10 {
             assert_eq!(
-                HexA7::cell_zones(level, root, 0, 0).len(),
+                HexA7::cell_zones(Private, level, root, 0, 0).len(),
                 per_pentagon,
                 "level {level}, the pentagon's cell of root {root}"
             );
@@ -268,13 +280,14 @@ fn the_regular_cells_of_the_aperture_7_lattice_host_what_the_count_of_a_level_as
                 (5 * edge / 7, 5 * edge / 7),
             ] {
                 assert_eq!(
-                    HexA7::cell_zones(level, root, row, col).len(),
+                    HexA7::cell_zones(Private, level, root, row, col).len(),
                     per_cell,
                     "level {level}, root {root}, row {row}, column {col}"
                 );
             }
         }
-        let polar = HexA7::polar_zones(level, 10).len() + HexA7::polar_zones(level, 11).len();
+        let polar = HexA7::polar_zones(Private, level, 10).len()
+            + HexA7::polar_zones(Private, level, 11).len();
         assert_eq!(polar, 2 * per_pentagon, "level {level}");
         assert_eq!(
             (10 * edge * edge - 10) * per_cell as u64 + 10 * per_pentagon as u64 + polar as u64,
@@ -306,10 +319,10 @@ fn an_aperture_7_zone_is_located_in_the_cell_that_hosts_it() {
 fn no_cell_hosts_the_child_a_pentagon_does_not_have() {
     for level in 1..=Z7::MAX_RESOLUTION {
         let mut hosted: Vec<Hosted> = (0..10)
-            .map(|root| HexA7::cell_zones(level, root, 0, 0))
+            .map(|root| HexA7::cell_zones(Private, level, root, 0, 0))
             .collect();
-        hosted.push(HexA7::polar_zones(level, 10));
-        hosted.push(HexA7::polar_zones(level, 11));
+        hosted.push(HexA7::polar_zones(Private, level, 10));
+        hosted.push(HexA7::polar_zones(Private, level, 11));
         for zones in hosted {
             assert_eq!(zones.len(), if level % 2 == 1 { 6 } else { 1 });
             for (a, _) in zones {
@@ -331,7 +344,7 @@ fn no_cell_hosts_the_child_a_pentagon_does_not_have() {
         (11, &[0, 0, 5, 1]),
         (3, &[0, 0, 0, 0, 2, 6, 6]),
     ] {
-        assert_eq!(HexA7::locate(&Address::new(base, digits)), None);
+        assert_eq!(HexA7::locate(Private, &Address::new(base, digits)), None);
     }
 }
 
@@ -340,11 +353,11 @@ fn no_cell_hosts_the_child_a_pentagon_does_not_have() {
 #[test]
 fn the_aperture_7_lattice_answers_nothing_outside_itself() {
     for level in [20, 21, 40, 255] {
-        assert_eq!(HexA7::lattice_edge(level), 0, "level {level}");
-        assert!(HexA7::cell_zones(level, 0, 0, 0).is_empty());
-        assert!(HexA7::polar_zones(level, 10).is_empty());
+        assert_eq!(HexA7::lattice_edge(Private, level), 0, "level {level}");
+        assert!(HexA7::cell_zones(Private, level, 0, 0, 0).is_empty());
+        assert!(HexA7::polar_zones(Private, level, 10).is_empty());
     }
-    let edge = HexA7::lattice_edge(5);
+    let edge = HexA7::lattice_edge(Private, 5);
     assert_eq!(edge, 49);
     for (root, row, col) in [
         (10, 0, 0),
@@ -357,12 +370,15 @@ fn the_aperture_7_lattice_answers_nothing_outside_itself() {
         (0, 0, u64::MAX),
     ] {
         assert!(
-            HexA7::cell_zones(5, root, row, col).is_empty(),
+            HexA7::cell_zones(Private, 5, root, row, col).is_empty(),
             "{root} {row} {col}"
         );
     }
     for root in [0, 9, 12, 255] {
-        assert!(HexA7::polar_zones(5, root).is_empty(), "root {root}");
+        assert!(
+            HexA7::polar_zones(Private, 5, root).is_empty(),
+            "root {root}"
+        );
     }
     // A base cell the icosahedron does not have, a digit beyond the aperture, the terminator
     // as a digit, and the twentieth level, which the packing holds and the engine does not draw.
@@ -373,7 +389,7 @@ fn the_aperture_7_lattice_answers_nothing_outside_itself() {
         Address::new(3, &[1, 7, 1]),
         Address::new(3, &[1; 20]),
     ] {
-        assert_eq!(HexA7::locate(&a), None, "{a:?}");
+        assert_eq!(HexA7::locate(Private, &a), None, "{a:?}");
     }
 }
 
@@ -391,7 +407,7 @@ fn the_lattice_hosts_the_zones_that_the_engine_displaces_along_two_edges() {
         ("0132323232323232620", (0, 4, 2_882_399)),
     ] {
         let a = z7(text);
-        let located = HexA7::locate(&a).map(|(root, row, col, _)| (root, row, col));
+        let located = HexA7::locate(Private, &a).map(|(root, row, col, _)| (root, row, col));
         assert_eq!(located, Some(cell), "{text}");
         assert_eq!(times_hosted::<HexA7>(17, &a), 1, "{text}");
     }
@@ -426,7 +442,7 @@ const ADDRESSES_OF_ZONES_NAMED_OTHERWISE: [&str; 4] = [
 #[test]
 fn an_address_of_a_zone_that_is_named_otherwise_is_located_nowhere() {
     for text in ADDRESSES_OF_ZONES_NAMED_OTHERWISE {
-        assert_eq!(HexA7::locate(&z7(text)), None, "{text}");
+        assert_eq!(HexA7::locate(Private, &z7(text)), None, "{text}");
     }
     assert_eq!(times_hosted::<HexA7>(17, &z7("0000000000000000000")), 1);
 }
@@ -442,9 +458,9 @@ fn an_address_of_a_zone_that_is_named_otherwise_is_located_nowhere() {
 fn from_level_16_cells_beside_two_edges_host_nothing() {
     let full = |level: u8| if level % 2 == 1 { 7 } else { 1 };
     for level in 14..=17 {
-        let edge = HexA7::lattice_edge(level);
+        let edge = HexA7::lattice_edge(Private, level);
         for back in 1..=5 {
-            let hosted = HexA7::cell_zones(level, 8, 0, edge - back).len();
+            let hosted = HexA7::cell_zones(Private, level, 8, 0, edge - back).len();
             let expected = if level >= 16 && back >= 2 {
                 0
             } else {
@@ -455,7 +471,7 @@ fn from_level_16_cells_beside_two_edges_host_nothing() {
     }
     for level in 16..=19 {
         for row in 0..=45 {
-            let hosted = HexA7::cell_zones(level, 0, row, 100).len();
+            let hosted = HexA7::cell_zones(Private, level, 0, row, 100).len();
             let expected = if level >= 18 && (12..=40).contains(&row) {
                 0
             } else {
@@ -637,7 +653,7 @@ mod engine {
         }
         for &z in &unreadable {
             assert_eq!(
-                HexA7::locate(&Z7::decode(ZoneId(z))),
+                HexA7::locate(Private, &Z7::decode(ZoneId(z))),
                 None,
                 "{grid} level {level} {b:?}: {z:#x}"
             );

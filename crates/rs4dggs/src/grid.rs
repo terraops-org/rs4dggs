@@ -20,6 +20,7 @@ use std::sync::OnceLock;
 
 use crate::disk::Disk;
 use crate::facts;
+use crate::interfaces::sealed::Private;
 use crate::math;
 use crate::projections::wrap_lon_at;
 use crate::zone::Zone;
@@ -689,8 +690,13 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
     /// the inverse projection fails, since the eC's `inverse` clears its result before it
     /// returns false (`ri5x6.ec:554`). [`Grid::centroid`] is this point in degrees.
     fn centroid_radians(&self, id: ZoneId, a: &Address) -> (f64, f64) {
-        P::inverse_radians(&self.geom, T::planar_centroid(a), self.odd_grid(id))
-            .unwrap_or((0.0, 0.0))
+        P::inverse_radians(
+            Private,
+            &self.geom,
+            T::planar_centroid(a),
+            self.odd_grid(id),
+        )
+        .unwrap_or((0.0, 0.0))
     }
 
     /// The refined boundary of a zone with geometry as the engine's `getRefinedVertices`
@@ -716,7 +722,7 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
         } else {
             automatic_edge_divisions(T::APERTURE, level)
         };
-        let Some(ring) = T::planar_refined_vertices(a, n_divisions) else {
+        let Some(ring) = T::planar_refined_vertices(Private, a, n_divisions) else {
             return Vec::new();
         };
         let odd_grid = refined_odd_grid(T::APERTURE, level);
@@ -766,9 +772,12 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
             // A point whose inverse fails is left out (`RI7H.ec:569`, `0x2ac33` to `0x2ac37`),
             // and with it both tests below: so the ring is closed against its first point only
             // where the inverse of the last planar point succeeds.
-            let Some((lat, mut lon)) =
-                P::inverse_radians(&self.geom, PlanarPoint { face: -1, x, y }, odd_grid)
-            else {
+            let Some((lat, mut lon)) = P::inverse_radians(
+                Private,
+                &self.geom,
+                PlanarPoint { face: -1, x, y },
+                odd_grid,
+            ) else {
                 continue;
             };
 
@@ -832,9 +841,12 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
                     // Both inverses pass `oddGrid` true, whatever the level (`RI3H.ec:594`,
                     // `:617`; `ecx` set to 1 at `0xf8b8` and `0xfa49`), and a failure leaves
                     // that side out.
-                    let Some((lat, mut lon)) =
-                        P::inverse_radians(&self.geom, PlanarPoint { face: -1, x, y }, true)
-                    else {
+                    let Some((lat, mut lon)) = P::inverse_radians(
+                        Private,
+                        &self.geom,
+                        PlanarPoint { face: -1, x, y },
+                        true,
+                    ) else {
                         continue;
                     };
                     // `Sgn(out.lat) * 90`, in degrees, taken to radians by the product with
@@ -1490,11 +1502,12 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
         Ok(subs.iter().map(I::encode).collect())
     }
 
-    /// Where `sub` sits in this zone's sub-zone order, or `None` if it is no
-    /// sub-zone of it, or one that has no index. On an aperture-3 grid it is found as the
-    /// eC's own generic method finds it (`dggrs.ec:115-131`): the ordered sequence is built
-    /// and the position sought in it. On an aperture-7 grid it is found by the engine's own
-    /// walk of the order, described below. On every grid `Some(i)` is answered only where
+    /// Where `sub` sits in this zone's sub-zone order, or `None` if it is no sub-zone of it, or
+    /// one that has no index. On an aperture-3 grid it is found as the eC's own generic method
+    /// finds it (`dggrs.ec:115-131`): the ordered sequence is built and the position sought in
+    /// it. On an aperture-7 grid it is found by the engine's own walk of the order, and in the
+    /// order itself where the walk fails and the engine's own test of a sub-zone accepts the
+    /// zone, as described below. On every grid `Some(i)` is answered only where
     /// [`Grid::sub_zone_at_index`] at `i` is `sub`.
     ///
     /// Both identifiers are validated first, as the other sub-zone methods validate
@@ -1533,33 +1546,45 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
     /// hundredths of the way from its centroid to one of its six vertices lies in the zone.
     /// It then generates the centroids of the order from its head, and the index is that of
     /// the first which lies within 1e-11 of the centroid of `sub` in each coordinate. This
-    /// crate answers that index only once it has confirmed it: `Some(i)` where the entry of
-    /// the order at `i` is `sub`, and `None` otherwise. So `None` is "no sub-zone of it, or
-    /// one that has no index", and every index answered is one that
-    /// [`Grid::sub_zone_at_index`] gives back as `sub`.
+    /// crate answers that index where the entry of the order at it is `sub`.
     ///
-    /// Away from the broken seams every entry of an order has its index, which is its place,
-    /// at the pentagons too, where the engine's `getSubZoneAtIndex` is at fault and its walk
-    /// is not. In the broken seams, along the edges of the icosahedron from base cell 0 to 1
-    /// and from 1 to 6, among sub-zones of resolution 15 and finer, an order may name a zone
-    /// that has none: the engine's test of a sub-zone refuses it, or no centroid of the
-    /// order lies within 1e-11 of its own, and the engine answers -1 there, as this crate
-    /// answers `None`. Of the order of `0000000000000005` at depth 1 the entry at 4,
-    /// `00000000000000005`, and the entry at 9, `00000000000000055`, have no index. The null
-    /// zone, which such an order may hold, is refused as `sub` like any identifier with no
-    /// cell behind it, and so has none either.
+    /// Away from the broken seams every entry of an order has that index, which is its place, at
+    /// the pentagons too, where the engine's `getSubZoneAtIndex` is at fault and its walk is not.
+    /// Elsewhere the walk may fail, and there this crate departs from the engine a third time. In
+    /// the broken seams, along the edges of the icosahedron from base cell 0 to 1 and from 1 to 6,
+    /// among sub-zones of resolution 15 and finer, the engine's test of a sub-zone may accept an
+    /// entry of the order whose centroid no centroid of the order meets within 1e-11, and the
+    /// engine answers -1; or the walk may answer an index at which the engine's own order holds
+    /// another zone. Wherever the engine's test accepts `sub` and the walk gives no index at which
+    /// the order holds it, this crate seeks `sub` in the order itself, generated entry by entry and
+    /// never built, and answers its first place there, or `None` where the order does not hold it.
+    /// Where the engine's test refuses `sub`, the answer is `None` at once, as the engine's -1, and
+    /// costs no more than the test: so a zone that is no sub-zone is refused in microseconds, and
+    /// an entry of the order that the test refuses has no index, here as in the engine. That
+    /// happens in the broken seams, at some tens of the entries of the suites' samples on each
+    /// grid, of resolutions 15 to 19, and below an identifier that is not the zone found at its own
+    /// centroid, such as the child that a pentagon lacks, at every entry, since the test finds that
+    /// zone and not the identifier. Of the order of `0000000000000005` at depth 1 the entry at 4,
+    /// `00000000000000005`, which the engine's test refuses, has no index, and the entry at 9,
+    /// `00000000000000055`, which it accepts and its walk does not find, has its place as its
+    /// index, where the engine answers -1. Where an order names a zone twice, the index is the
+    /// place that the walk finds, if it finds one, and the first place otherwise. The null zone,
+    /// which such an order may hold, is refused as `sub` like any identifier with no cell behind
+    /// it, and so has no index.
     ///
-    /// The walk costs one centroid for each entry before the one sought, so its cost grows
-    /// with the index: in a release build the middle of the 825,259 sub-zones of a hexagon
-    /// at depth 7 is some twelve milliseconds away, and the last twice that, while a zone
-    /// that is no sub-zone is refused in microseconds. The walk is therefore bound as a list
-    /// is: where the order is longer than [`max_materialised_sub_zones`], which under the
-    /// ceiling is any depth from 8 below a hexagon or a pentagon, the request is refused with
-    /// [`Error::TooManySubZones`] before any walk is begun, where the engine walks an order
-    /// of any length. A caller who pages through a deeper order with
-    /// [`Grid::sub_zone_at_index`] holds the index already.
+    /// The walk costs one centroid for each entry before the one sought, so its cost grows with the
+    /// index: in a release build the middle of the 825,259 sub-zones of a hexagon at depth 7 is
+    /// some twelve milliseconds away, and the last twice that, while a zone that is no sub-zone is
+    /// refused in microseconds. The search in the order, made only for a zone that the engine's
+    /// test accepts and its walk does not find, costs more, a quantisation for each entry before
+    /// the one sought, some 3.7 microseconds an entry in a release build, and so up to 3 seconds
+    /// through an order at depth 7. Both are therefore bound as a list is: where the order is
+    /// longer than [`max_materialised_sub_zones`], which under the ceiling is any depth from 8
+    /// below a hexagon or a pentagon, the request is refused with [`Error::TooManySubZones`] before
+    /// any walk is begun, where the engine walks an order of any length. A caller who pages through
+    /// a deeper order with [`Grid::sub_zone_at_index`] holds the index already.
     ///
-    /// A third departure, within the cap that bounds this search: a sub-zone at resolution 33 has
+    /// A fourth departure, within the cap that bounds this search: a sub-zone at resolution 33 has
     /// its index here, where DGGAL's own `getSubZoneIndex` answers -1 for some 83 to 84 per cent
     /// of them. The oracle suites, which compare every sub-zone at resolution 33 of the zones they
     /// sample at resolutions 31 and 32, find it answering -1 for 7,300 of 8,725 on ISEA3H, 7,277
@@ -1568,7 +1593,7 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
     /// find it is never entered; this crate's search does not go through `zoneHasSubZone` and
     /// answers the index it finds.
     ///
-    /// A fourth departure, a consequence of the corrected order: at the zones where
+    /// A fifth departure, a consequence of the corrected order: at the zones where
     /// [`Grid::sub_zones`] corrects the engine's order, the index answered here is the sub-zone's
     /// place in the corrected order, which is unique. DGGAL's own `getSubZoneIndex` searches its
     /// own faulty order. For a descendant that order omits, its `zoneHasSubZone` accepts the zone,
@@ -1597,8 +1622,8 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
             return Err(Error::TooManySubZones { count, limit });
         }
         if let Some(found) = T::sub_zone_index(&I::decode(id), &I::decode(sub)) {
-            // The topology's index is its walk's and no more: it is answered where the
-            // entry of the order there is the zone asked about.
+            // The topology's index is a place of the order: it is answered where the entry of
+            // the order there is the zone asked about.
             return Ok(found.filter(|&i| self.sub_zone_at_index(id, depth, i) == Ok(sub)));
         }
         let subs = self.sub_zones(id, depth)?;
@@ -1832,7 +1857,10 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
         if level > max {
             return Err(Error::ResolutionOutOfRange { res: level, max });
         }
-        Ok(crate::zones::Walk::new(level, T::lattice_edge(level)))
+        Ok(crate::zones::Walk::new(
+            level,
+            T::lattice_edge(Private, level),
+        ))
     }
 
     /// The zones that one cell of the lattice of `level` hosts, each with its key in the
@@ -1846,9 +1874,9 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
         col: u64,
     ) -> Vec<(ZoneId, u64)> {
         let hosted = if root < 10 {
-            T::cell_zones(level, root, row, col)
+            T::cell_zones(Private, level, root, row, col)
         } else {
-            T::polar_zones(level, root)
+            T::polar_zones(Private, level, root)
         };
         hosted
             .into_iter()
@@ -1868,7 +1896,7 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
         let place = (I::resolution(zone) == level)
             .then(|| I::decode(zone))
             .filter(|a| I::encode(a) == zone)
-            .and_then(|a| T::locate(&a));
+            .and_then(|a| T::locate(Private, &a));
         place.ok_or_else(|| {
             Error::InvalidZone(format!(
                 "zone id {:#018x} is no zone of level {level} of {}, so the zones of that \
@@ -1921,7 +1949,7 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
     /// it gives none. It is the point the search for the cells near a box measures a block of
     /// the lattice from.
     pub(crate) fn lattice_point(&self, x: f64, y: f64) -> Option<(f64, f64)> {
-        P::inverse_radians(&self.geom, PlanarPoint { face: -1, x, y }, false)
+        P::inverse_radians(Private, &self.geom, PlanarPoint { face: -1, x, y }, false)
     }
 
     /// Whether the extent of `zone` meets the box `bbox`, `[ll.lat, ll.lon, ur.lat, ur.lon]`
@@ -1936,8 +1964,13 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
         };
         // A centroid that the inverse projection cannot place prunes nothing: the zone is
         // then decided by its extent alone.
-        let near = P::inverse_radians(&self.geom, T::planar_centroid(&a), self.odd_grid(zone))
-            .is_none_or(|(lat, lon)| crate::zones::near_box(lat, lon, reach, bbox));
+        let near = P::inverse_radians(
+            Private,
+            &self.geom,
+            T::planar_centroid(&a),
+            self.odd_grid(zone),
+        )
+        .is_none_or(|(lat, lon)| crate::zones::near_box(lat, lon, reach, bbox));
         near && self
             .extent_radians(zone, &a)
             .is_some_and(|extent| crate::zones::intersects(&extent, bbox))
@@ -1954,8 +1987,11 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
     ) -> Result<(crate::zones::Walk, crate::zones::Search)> {
         let walk = self.lattice_walk(level)?;
         let bbox = crate::zones::box_radians(bbox)?;
-        let search =
-            crate::zones::Search::new(bbox, T::lattice_edge(level), self.count_zones(level)?);
+        let search = crate::zones::Search::new(
+            bbox,
+            T::lattice_edge(Private, level),
+            self.count_zones(level)?,
+        );
         Ok((walk, search))
     }
 
@@ -2128,9 +2164,9 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
         self.lattice_walk(level)?;
         let [south, west, north, east] = crate::zones::box_radians(bbox)?;
         let on_the_sphere = [
-            P::sphere_latitude(&self.geom, south),
+            P::sphere_latitude(Private, &self.geom, south),
             west,
-            P::sphere_latitude(&self.geom, north),
+            P::sphere_latitude(Private, &self.geom, north),
             east,
         ];
         Ok(crate::zones::estimate(
@@ -2298,7 +2334,7 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
                 return Err(Error::MixedLevels { level, other });
             }
         }
-        let compacted = T::compact(&addresses).ok_or(Error::NoSubZoneOrder)?;
+        let compacted = T::compact(Private, &addresses).ok_or(Error::NoSubZoneOrder)?;
         Ok(compacted.iter().map(I::encode).collect())
     }
 }
@@ -2866,13 +2902,15 @@ mod tests {
         }
     }
 
-    /// In the broken seams an order may name a zone that has no index. The engine's walk
-    /// first asks whether the zone is a sub-zone at all, by a test that the seams defeat, and
-    /// then seeks the zone's own centroid among those of the order, which need not hold it.
-    /// Each row is the engine's `getSubZones` and its `getSubZoneIndex`, the same on the
-    /// three grids.
+    /// In the broken seams an order may name a zone for which the engine's walk finds no
+    /// index. The walk first asks whether the zone is a sub-zone at all, by a test that the
+    /// seams defeat, and then seeks the zone's own centroid among those of the order, which
+    /// need not hold it. Each row is the engine's `getSubZones` and the index here, the same on
+    /// the three grids: the engine's `getSubZoneIndex`, save where its test accepts the zone
+    /// and its walk finds none, where the index is the zone's first place in the order, found
+    /// in the order itself. A zone that the test refuses has none, here as in the engine.
     #[test]
-    fn aperture7_seam_entries_may_have_no_index() {
+    fn aperture7_seam_entries_have_an_index_where_the_engines_test_accepts_them() {
         for name in APERTURE_7 {
             let g = get_grid(name).unwrap();
             let id = |text: &str| g.zone_from_text(text).unwrap();
@@ -2887,8 +2925,9 @@ mod tests {
                         (5, "00000000000000051", Some(5)),
                         (6, "00000000000000050", Some(6)),
                         (8, "00000000000000532", Some(8)),
-                        // Accepted by that test, and met by no centroid of the order.
-                        (9, "00000000000000055", None),
+                        // Accepted by that test, and met by no centroid of the order: the
+                        // engine answers -1, and its place is found in the order.
+                        (9, "00000000000000055", Some(9)),
                     ][..],
                 ),
                 (
@@ -2927,7 +2966,8 @@ mod tests {
     /// which its own order, which holds what its quantiser makes of them, names another zone:
     /// for `000000000000000001` below `00000000000000000` the engine's `getSubZoneIndex`
     /// answers 6, where its `getSubZones` holds `000000000000000000`, and the zone asked about
-    /// stands at another place of that order. Such a zone has no index here.
+    /// stands at another place of that order, 3. Here it has that place as its index, found in
+    /// the order itself.
     #[test]
     fn aperture7_sub_zone_index_is_confirmed_by_the_order() {
         for name in APERTURE_7 {
@@ -2937,7 +2977,8 @@ mod tests {
             let order = g.sub_zones(zone, 1).unwrap();
             assert!(order.contains(&sub), "{name}");
             assert_eq!(g.text_id(order[6]), "000000000000000000", "{name}");
-            assert_eq!(g.sub_zone_index(zone, sub), Ok(None), "{name}");
+            assert_eq!(order[3], sub, "{name}");
+            assert_eq!(g.sub_zone_index(zone, sub), Ok(Some(3)), "{name}");
             // Its centroid child, which the order holds at 6, has that index.
             assert_eq!(g.sub_zone_index(zone, order[6]), Ok(Some(6)), "{name}");
         }

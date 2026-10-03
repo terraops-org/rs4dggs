@@ -1,6 +1,7 @@
 //! ISEA projection: the shared icosahedral kernel bound to the ISEA vertex assignment
 //! (eC `isea` case of `VGCRadialVertex`, `icoVertexGreatCircle.ec:127`). Port of py4dggs
 //! `projections/isea.py`.
+use crate::interfaces::sealed::{Private, ProjectionPlumbing};
 use crate::projections::icovertex::{self, IcoGeometry, RadialVertex};
 use crate::{GeoPoint, GridConfig, PlanarPoint, Projection};
 
@@ -24,14 +25,22 @@ impl Projection for Isea {
     fn inverse(geom: &IcoGeometry, p: PlanarPoint, odd_grid: bool) -> GeoPoint {
         icovertex::inverse(geom, p, odd_grid)
     }
+}
+
+impl ProjectionPlumbing for Isea {
     /// The eC's `RI5x6Projection::inverse` (`ri5x6.ec:511-556`) as it answers: in radians, and
     /// `None` where it returns `false`.
-    fn inverse_radians(geom: &IcoGeometry, p: PlanarPoint, odd_grid: bool) -> Option<(f64, f64)> {
+    fn inverse_radians(
+        _: Private,
+        geom: &IcoGeometry,
+        p: PlanarPoint,
+        odd_grid: bool,
+    ) -> Option<(f64, f64)> {
         icovertex::inverse_radians(geom, p, odd_grid)
     }
     /// The authalic latitude where the geometry converts latitudes, as `forward` does
     /// (`ri5x6.ec:252-255`, `:397`), and the latitude itself where it does not.
-    fn sphere_latitude(geom: &IcoGeometry, lat: f64) -> f64 {
+    fn sphere_latitude(_: Private, geom: &IcoGeometry, lat: f64) -> f64 {
         icovertex::sphere_latitude(geom, lat)
     }
 }

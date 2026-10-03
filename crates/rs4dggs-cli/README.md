@@ -429,9 +429,10 @@ user of `dgg` directly:
   with a segmentation fault. In all three cases the tool answers the entry of the list;
 - the index of a sub-zone on the aperture-7 grids, along the two seams: there the engine's index
   may be a position at which its own list holds another zone (`dgg` gives 6 for
-  `000000000000000001` within `00000000000000000`, whose list holds it at position 3), and the
-  tool, as the library, states an index only where the order holds the sub-zone at it, and
-  otherwise says that the zone has none;
+  `000000000000000001` within `00000000000000000`, whose list holds it at position 3), or none for
+  a zone that its list holds and its own test of a sub-zone accepts, and the tool, as the
+  library, states the position at which the order holds the sub-zone, the first where it holds
+  it twice; a zone that the engine's test refuses has none, as in `dgg`;
 - the index of a zone among its own sub-zones, at depth 0, on every grid:
   `dgg <grid> index <zone> <zone>` says `sub-zone <zone> not found within parent <zone>`, with
   exit code 1, and the tool answers index 0, since at depth 0 the order is the zone alone;

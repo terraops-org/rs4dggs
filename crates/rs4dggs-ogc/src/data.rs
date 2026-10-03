@@ -11,7 +11,11 @@ use crate::{Dggrs, Error, Result, json};
 ///
 /// A value of `f32` or `f64` that is not finite is written as a missing value, since neither
 /// encoding of the standard has a form for it.
+///
+/// The type may gain variants in a later release, so that a `match` on it outside this crate
+/// needs an arm for the others.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum Values<'a> {
     /// Unsigned integers of 8 bits.
     U8(&'a [Option<u8>]),
@@ -54,7 +58,17 @@ impl Values<'_> {
 
 /// One property of the data (a band of a raster, for instance), with its values at each
 /// relative depth asked.
+///
+/// Built by [`Property::new`]; the type may gain fields in a later release, so that it is not
+/// built from its fields outside this crate.
+///
+/// Built from its fields outside this crate, it does not compile:
+///
+/// ```compile_fail,E0639
+/// let property = rs4dggs_ogc::Property { name: "t", depths: &[] };
+/// ```
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct Property<'a> {
     /// The name of the property, as the document carries it.
     pub name: &'a str,
@@ -65,7 +79,22 @@ pub struct Property<'a> {
 
 /// The data of one zone: the values of its sub-zones at one or more relative depths, for one or
 /// more properties.
+///
+/// Built by [`ZoneData::new`]; the type may gain fields in a later release, so that it is not
+/// built from its fields outside this crate. The arguments borrow their slices: a slice built in
+/// the call itself lives only to the end of its statement, so that data used in later statements
+/// take their properties and values from slices bound beforehand, as the example of
+/// [`write_dggs_json`] does.
+///
+/// Built from its fields outside this crate, it does not compile:
+///
+/// ```compile_fail,E0639
+/// let dggrs = rs4dggs_ogc::Dggrs::from_id("ISEA3H").unwrap();
+/// let zone = dggrs.grid().zone_from_text("C2-23-C").unwrap();
+/// let data = rs4dggs_ogc::ZoneData { dggrs, zone, depths: &[1], properties: &[] };
+/// ```
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct ZoneData<'a> {
     /// The grid, whose URI the document carries.
     pub dggrs: &'static Dggrs,
@@ -76,6 +105,32 @@ pub struct ZoneData<'a> {
     pub depths: &'a [u8],
     /// The properties, in the order the document lists them.
     pub properties: &'a [Property<'a>],
+}
+
+impl<'a> Property<'a> {
+    /// The property `name`, with its values at each relative depth: `depths` holds one entry
+    /// for each depth of the data, in their order.
+    pub const fn new(name: &'a str, depths: &'a [Values<'a>]) -> Self {
+        Self { name, depths }
+    }
+}
+
+impl<'a> ZoneData<'a> {
+    /// The data of `zone` of `dggrs`: at each relative depth of `depths`, in that order, the
+    /// values of every property of `properties`.
+    pub const fn new(
+        dggrs: &'static Dggrs,
+        zone: ZoneId,
+        depths: &'a [u8],
+        properties: &'a [Property<'a>],
+    ) -> Self {
+        Self {
+            dggrs,
+            zone,
+            depths,
+            properties,
+        }
+    }
 }
 
 /// The names the data documents reserve: a property of this name would be confused, in zone
@@ -164,12 +219,9 @@ pub(crate) fn check(data: &ZoneData, reserved: &[&str]) -> Result<Vec<u64>> {
 /// let dggrs = Dggrs::from_id("ISEA3H").unwrap();
 /// let zone = dggrs.grid().zone_from_text("C2-23-C")?;
 /// let band = [Some(0.5), Some(1.5), None, Some(0.1), Some(22.8), Some(f32::NAN), Some(6.0)];
-/// let data = ZoneData {
-///     dggrs,
-///     zone,
-///     depths: &[1],
-///     properties: &[Property { name: "t", depths: &[Values::F32(&band)] }],
-/// };
+/// let values = [Values::F32(&band)];
+/// let properties = [Property::new("t", &values)];
+/// let data = ZoneData::new(dggrs, zone, &[1], &properties);
 /// let mut out = Vec::new();
 /// write_dggs_json(&mut out, &data)?;
 /// assert!(out.ends_with(br#""data":[0.5,1.5,null,0.1,22.8,null,6]}]}}"#));

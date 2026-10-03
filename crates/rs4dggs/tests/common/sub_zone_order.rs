@@ -19,18 +19,21 @@
 //! place. The length of an order and every other entry are the engine's own, its null zones
 //! and its repeats included.
 //!
-//! The index of a sub-zone is the engine's wherever it is answered, and it is answered only
-//! where the order holds the zone at that index. It parts from the engine's in one way
-//! alone, which is counted: where the engine answers an index at which its own order holds
-//! another zone, there is none here. Below level 15 the index of every entry asked is its
-//! place, here and in the engine.
+//! The index of a sub-zone is a place at which the order holds the zone: the engine's, where
+//! the order holds the zone there, and otherwise, where the engine's own test of a sub-zone
+//! accepts the zone, its first place, found in the order itself. It parts from the engine's
+//! in that way alone, which is counted: where the engine answers -1 for an entry that its test
+//! accepts, or an index at which its own order holds another zone. An entry that the test
+//! refuses has none, as in the engine, and is counted; a zone that the order does not hold has
+//! none, where the engine may answer an index all the same, which is counted too. Below level 15 the index of
+//! every entry asked is its place, here and in the engine.
 //!
 //! What the broken seams do to an order is counted by class and by the level of the
 //! sub-zones, and held, exactly, to what is recorded of each grid (see [`Recorded`]): the
 //! entries that are the engine's null zone, those that it cannot read back, those that the
 //! order holds already, the orders that hold any of the three, which are not sound, the
 //! orders at depth 1 that hold none of them and are all the same not the set of the zone's
-//! children, and the entries that have no index, or one that is not their place. Every such
+//! children, and the entries whose index is not the engine's, or not their place. Every such
 //! order has its sub-zones at level 15 or finer, and its zone reaches
 //! the band about the seams; below level 15 every order is asserted sound, and at depth 1
 //! the set of the children.
@@ -77,13 +80,17 @@ const NOT_SOUND: &str = "an order that is not sound";
 /// broken seam.
 const NOT_THE_CHILDREN: &str = "a sound order at depth 1 that is not the set of the children";
 
-/// An entry of an order for which the engine's `getSubZoneIndex` answers -1: it has no
-/// index, in the engine and here.
-const NO_INDEX: &str = "an entry that has no index, as in the engine";
+/// An entry of an order for which the engine's `getSubZoneIndex` answers -1, having refused
+/// it by its own test of a sub-zone: it has no index, in the engine and here.
+const NO_INDEX: &str = "an entry that the engine's test refuses: no index, as in the engine";
+/// An entry of an order for which the engine's `getSubZoneIndex` answers -1, its test of a
+/// sub-zone accepting it: its index here is its first place, found in the order itself.
+const FOUND_WITHOUT_AN_INDEX: &str =
+    "an entry that has no index in the engine, found here at its first place";
 /// An entry for which the engine answers an index at which its own order holds another
-/// zone: it has no index here.
-const INDEX_OF_ANOTHER_ZONE: &str =
-    "an entry whose index in the engine is the place of another zone, and that has none here";
+/// zone: its index here is its first place, found in the order itself.
+const FOUND_AT_ANOTHER_ZONE: &str = "an entry whose index in the engine is the place of another zone, found here at its first \
+     place";
 /// An entry whose index, in the engine and here, is another place of the order, which holds
 /// the same zone there.
 const INDEX_OF_ANOTHER_PLACE: &str = "an entry whose index is another place of the same zone";
@@ -193,11 +200,14 @@ impl Orders {
     }
 
     /// The index of `sub` among the sub-zones `ours` of `id`, here and in the engine, where
-    /// `place` is the place at which the order holds it, if it does. The index answered
-    /// here is the engine's, and the order holds the zone there; where none is answered,
-    /// the engine answers -1, or an index at which the order holds another zone. Answers
-    /// whether the pair fell in a class of the broken seams, which is counted by the level
-    /// of the sub-zones; and whether the zone has an index here.
+    /// `place` is the place at which the order holds it, if it does. The index here is a place
+    /// at which the order holds the zone: the engine's, where the order holds the zone there;
+    /// otherwise, where the engine's test of a sub-zone accepts the zone and the engine answers
+    /// -1 or an index at which its order holds another zone, the zone's first place; and none
+    /// where that test refuses it, as in the engine. A zone that the order does not hold has
+    /// none, where the engine answers -1 or an index all the same. Answers
+    /// whether the pair fell in a class of the broken seams, which is counted by the level of
+    /// the sub-zones; and whether the zone has an index here.
     fn index_of<S: Subject<T = HexA7, I = Z7>>(
         &mut self,
         id: ZoneId,
@@ -211,29 +221,65 @@ impl Orders {
         let at = format!("{at}: the index of {}", g.text_id(sub));
         let engine = o::sub_zone_index(S::ORACLE, id.0, sub.0);
         let index = g.sub_zone_index(id, sub);
+        let first = ours.iter().position(|&entry| entry == sub);
+        assert_eq!(
+            first.is_some(),
+            place.is_some(),
+            "{at}: the place given, against the order"
+        );
+        // The entry of the engine's order at the engine's index, where it answers one.
+        let there = usize::try_from(engine).ok().and_then(|j| ours.get(j));
         let class = match index {
             Ok(Some(j)) => {
-                assert_eq!(j as i64, engine, "{at}, against the engine's");
                 assert_eq!(
                     ours[j as usize], sub,
                     "{at} is {j}, and the order holds another zone there"
                 );
                 let place = place.unwrap_or_else(|| panic!("{at} is {j}, and no place was found"));
-                (place != j as usize).then_some(INDEX_OF_ANOTHER_PLACE)
-            }
-            Ok(None) if engine == -1 => place.map(|_| NO_INDEX),
-            Ok(None) => {
-                let there = usize::try_from(engine).ok().and_then(|j| ours.get(j));
-                assert!(
-                    there.is_some_and(|&zone| zone != sub),
-                    "{at} is none here and {engine} in the engine, where the order holds {:?}",
-                    there.map(|&zone| g.text_id(zone))
-                );
-                Some(if place.is_some() {
-                    INDEX_OF_ANOTHER_ZONE
+                if j as i64 == engine {
+                    (place != j as usize).then_some(INDEX_OF_ANOTHER_PLACE)
                 } else {
-                    INDEX_OF_NO_ENTRY
-                })
+                    assert_eq!(
+                        Some(j as usize),
+                        first,
+                        "{at} is {j} here and {engine} in the engine: the first place"
+                    );
+                    assert!(
+                        o::zone_has_sub_zone(S::ORACLE, id.0, sub.0),
+                        "{at} is {j} here, where the engine's test refuses the zone"
+                    );
+                    if engine == -1 {
+                        Some(FOUND_WITHOUT_AN_INDEX)
+                    } else {
+                        assert!(
+                            there.is_some_and(|&zone| zone != sub),
+                            "{at} is {j} here and {engine} in the engine, where the order \
+                             holds {:?}",
+                            there.map(|&zone| g.text_id(zone))
+                        );
+                        Some(FOUND_AT_ANOTHER_ZONE)
+                    }
+                }
+            }
+            Ok(None) => {
+                if engine == -1 {
+                    place.map(|_| {
+                        assert!(
+                            !o::zone_has_sub_zone(S::ORACLE, id.0, sub.0),
+                            "{at}: an entry of the order that the engine's test accepts has no \
+                             index"
+                        );
+                        NO_INDEX
+                    })
+                } else {
+                    assert!(
+                        there.is_some_and(|&zone| zone != sub),
+                        "{at} is none here and {engine} in the engine, where the order holds \
+                         {:?}",
+                        there.map(|&zone| g.text_id(zone))
+                    );
+                    Some(INDEX_OF_NO_ENTRY)
+                }
             }
             Err(e) => panic!("{at} is refused: {e}"),
         };
@@ -264,9 +310,9 @@ impl Orders {
     ///   [`Orders::index_of`] does; the null zone refused as a sub-zone; and, at depth 1, the
     ///   index of every zone of the order of the zone's first neighbour, which is a
     ///   sub-zone of this zone too where the two share it across their boundary and no
-    ///   sub-zone of it otherwise. An entry whose index is not its place, or a zone with an
-    ///   index in the engine and none here, is counted, and its order held to the broken
-    ///   seams.
+    ///   sub-zone of it otherwise. An entry whose index is not its place or not the
+    ///   engine's, or a zone with an index in the engine and none here, is counted, and its
+    ///   order held to the broken seams.
     ///
     /// An order is held to the seams once, whatever the number of its classes.
     fn compare<S: Subject<T = HexA7, I = Z7>>(&mut self, id: ZoneId, depth: u8, ask_index: bool) {
@@ -519,38 +565,41 @@ fn hexagon_orders_recorded<S: Subject>() -> Option<Recorded> {
     let (by_depth, indices, classes): RecordedOfTheHexagons = match S::NAME {
         "IGEO7" => (
             &[(1, 4_993, 64_909), (2, 746, 41_030), (3, 106, 40_174)],
-            [27_529, 16_166, 2_480],
+            [27_529, 16_166, 2_486],
             &[
                 (ENGINES_NULL_ZONE, &[(15, 116), (17, 66), (19, 24)]),
                 (UNREADABLE, &[(16, 14), (18, 6)]),
                 (NOT_SOUND, &[(15, 14), (16, 5), (17, 11), (18, 4), (19, 4)]),
                 (NOT_THE_CHILDREN, &[(16, 3), (18, 2)]),
-                (NO_INDEX, &[(15, 6), (16, 8), (17, 8), (18, 6)]),
-                (INDEX_OF_ANOTHER_ZONE, &[(16, 19), (18, 5)]),
+                (NO_INDEX, &[(15, 3), (16, 8), (17, 8), (18, 6)]),
+                (FOUND_WITHOUT_AN_INDEX, &[(15, 3)]),
+                (FOUND_AT_ANOTHER_ZONE, &[(16, 19), (18, 5)]),
                 (INDEX_OF_NO_ENTRY, &[(16, 2)]),
             ],
         ),
         "IVEA7H" => (
             &[(1, 4_965, 64_545), (2, 740, 40_700), (3, 101, 38_279)],
-            [27_113, 15_961, 2_465],
+            [27_113, 15_961, 2_468],
             &[
                 (ENGINES_NULL_ZONE, &[(15, 44), (17, 42), (19, 24)]),
                 (UNREADABLE, &[(16, 1), (18, 4)]),
                 (NOT_SOUND, &[(15, 7), (16, 1), (17, 7), (18, 3), (19, 4)]),
                 (NOT_THE_CHILDREN, &[(16, 1), (18, 2)]),
-                (NO_INDEX, &[(15, 7), (17, 12), (18, 53), (19, 8)]),
+                (NO_INDEX, &[(15, 2), (17, 10), (18, 53), (19, 4)]),
+                (FOUND_WITHOUT_AN_INDEX, &[(15, 5), (17, 2), (19, 4)]),
             ],
         ),
         "RTEA7H" => (
             &[(1, 4_960, 64_480), (2, 762, 41_910), (3, 108, 40_932)],
-            [27_888, 16_148, 2_492],
+            [27_888, 16_148, 2_506],
             &[
                 (ENGINES_NULL_ZONE, &[(15, 54), (17, 122), (19, 24)]),
                 (UNREADABLE, &[(16, 1), (18, 4)]),
                 (NOT_SOUND, &[(15, 8), (16, 1), (17, 9), (18, 3), (19, 4)]),
                 (NOT_THE_CHILDREN, &[(16, 1), (18, 2)]),
-                (NO_INDEX, &[(15, 2), (16, 13), (17, 19), (19, 4)]),
-                (INDEX_OF_ANOTHER_ZONE, &[(16, 32)]),
+                (NO_INDEX, &[(16, 13), (17, 16), (19, 2)]),
+                (FOUND_WITHOUT_AN_INDEX, &[(15, 2), (17, 3), (19, 2)]),
+                (FOUND_AT_ANOTHER_ZONE, &[(16, 32)]),
                 (INDEX_OF_NO_ENTRY, &[(16, 6)]),
             ],
         ),
@@ -609,17 +658,15 @@ fn pentagon_orders_recorded<S: Subject>() -> Option<Recorded> {
             // depth 2.
             first_not_asked: 9,
             pentagons_at_odd_depths: 228 + 204 + 24,
-            indices: [21_973, 2_900, 441],
+            indices: [21_973, 2_900, 456],
             classes: &[
                 (ENGINES_NULL_ZONE, &[(15, 93), (17, 568), (19, 568)]),
                 (UNREADABLE, &[(16, 31), (18, 115)]),
                 (REPEAT, &[(16, 6), (17, 7), (18, 12), (19, 7)]),
                 (NOT_SOUND, &[(15, 9), (16, 4), (17, 9), (18, 5), (19, 9)]),
-                (
-                    NO_INDEX,
-                    &[(15, 12), (16, 16), (17, 18), (18, 18), (19, 18)],
-                ),
-                (INDEX_OF_ANOTHER_ZONE, &[(16, 110), (18, 130)]),
+                (NO_INDEX, &[(15, 1), (16, 16), (17, 2), (18, 18), (19, 2)]),
+                (FOUND_WITHOUT_AN_INDEX, &[(15, 11), (17, 16), (19, 16)]),
+                (FOUND_AT_ANOTHER_ZONE, &[(16, 110), (18, 130)]),
                 (
                     INDEX_OF_ANOTHER_PLACE,
                     &[(16, 2), (17, 1), (18, 2), (19, 1)],
@@ -753,7 +800,7 @@ fn seam_orders_recorded<S: Subject>() -> Option<Recorded> {
             first_not_asked: 0,
             // The one pentagon of the sample, `0000000000000000`, at depth 1.
             pentagons_at_odd_depths: 1,
-            indices: [47_441, 23_694, 3_401],
+            indices: [47_441, 23_694, 3_426],
             classes: &[
                 (ENGINES_NULL_ZONE, &[(15, 24), (17, 227), (19, 1_293)]),
                 (UNREADABLE, &[(16, 21), (18, 78), (19, 10)]),
@@ -765,9 +812,10 @@ fn seam_orders_recorded<S: Subject>() -> Option<Recorded> {
                 (NOT_THE_CHILDREN, &[(16, 5), (18, 52)]),
                 (
                     NO_INDEX,
-                    &[(15, 5), (16, 80), (17, 236), (18, 1_110), (19, 1_570)],
+                    &[(15, 2), (16, 80), (17, 230), (18, 1_110), (19, 1_566)],
                 ),
-                (INDEX_OF_ANOTHER_ZONE, &[(16, 80), (18, 59)]),
+                (FOUND_WITHOUT_AN_INDEX, &[(15, 3), (17, 6), (19, 4)]),
+                (FOUND_AT_ANOTHER_ZONE, &[(16, 80), (18, 59)]),
                 (INDEX_OF_NO_ENTRY, &[(16, 4), (18, 2)]),
             ],
         }),

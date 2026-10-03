@@ -24,7 +24,11 @@ pub(crate) mod census;
 ///
 /// A ring that crosses the antimeridian is cut there into as many polygons as it has pieces on
 /// either side of it, each within -180 to 180 degrees of longitude.
+///
+/// The type may gain variants in a later release, so that a `match` on it outside this crate
+/// needs an arm for the others.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Shape {
     /// One closed ring.
     Polygon(Vec<[f64; 2]>),

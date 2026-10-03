@@ -1078,13 +1078,25 @@ pub(super) fn sub_zone_at_index(a: &Address, depth: u8, index: u64) -> Option<Ad
     Some(address_of_centroid(centroid, sz_level))
 }
 
-/// The index of the zone of `sub` in the order of the sub-zones of the zone of `parent`, by
-/// the engine's own walk ([`index_by_the_walk`]), as its `getSubZoneIndex` answers
-/// (`RI7H_Z7.ec:599-602`): `Some(Some(i))` where the walk finds it, `Some(None)` where it
-/// finds none. The index is the walk's and no more: whether the entry of
-/// the order at `i` is the zone of `sub` is for the caller to confirm, as the grid does, since
-/// the walk compares centroids and the order holds what the quantiser makes of them, which in
-/// the broken seams need not be the same zone.
+/// The index of the zone of `sub` in the order of the sub-zones of the zone of `parent`:
+/// `Some(Some(i))` where the entry of the order at `i` is the zone of `sub`, and `Some(None)`
+/// where the order does not hold it.
+///
+/// It is found first by the engine's own walk ([`index_by_the_walk`]), as its
+/// `getSubZoneIndex` answers (`RI7H_Z7.ec:599-602`), and that index is answered where the
+/// entry of the order there is the zone of `sub`. The walk compares centroids, and the order
+/// holds what the quantiser makes of them, which in the broken seams need not be the same
+/// zone. Where the walk gives no index, or one at which the order holds another zone, and the
+/// engine's own test of a sub-zone, [`zone_has_sub_zone`], accepts the zone, the zone is
+/// sought in the order itself, entry by entry, by [`index_in_the_order`], and its first place
+/// there is the index: a departure from the engine, which answers -1 or that other zone's
+/// index. Where that test refuses the zone, the answer is `Some(None)` at once, as the
+/// engine's -1: so a zone that is no sub-zone costs no more than the test, and an entry of the
+/// order that the test refuses has no index, which in the broken seams happens at some tens of
+/// entries, and below an identifier that is not the zone found at its own centroid at every
+/// entry, since the test finds that zone and not the identifier. Where the order names a zone
+/// twice, the index is the walk's where the walk finds one of its places, and the first place
+/// otherwise.
 ///
 /// The crate's own rule stands where the two share a level, which the grid settles before it
 /// asks: a zone is its own sub-zone at index 0, and no other zone of its level is, where the
@@ -1110,7 +1122,41 @@ pub(super) fn sub_zone_index(parent: &Address, sub: &Address) -> Option<Option<u
         return None;
     }
     let sub_zone = zone_from_steps(sub.base, sub.digits());
-    Some(u64::try_from(index_by_the_walk(&z, &sub_zone)).ok())
+    let walked = u64::try_from(index_by_the_walk(&z, &sub_zone))
+        .ok()
+        .filter(|&i| sub_zone_at_index(parent, depth, i) == Some(*sub));
+    // The order is searched only for a zone that the engine's own test takes for a sub-zone,
+    // so that a zone that is none is refused as fast as the walk refuses it.
+    Some(walked.or_else(|| {
+        zone_has_sub_zone(&z, &sub_zone)
+            .then(|| index_in_the_order(&z, depth, sub))
+            .flatten()
+    }))
+}
+
+/// The first place of the zone of `sub` in the order of the sub-zones of `z` at `depth`, or
+/// `None` where the order does not hold it: the centroids of [`iterate_sub_zones`]
+/// quantised one by one at the sub-zone level, as [`sub_zones`] quantises them, and compared
+/// with `sub`, without the order being built. The generator delivers its centroids in the
+/// order of their indices, so that the first met is the first place; an index beyond the count,
+/// which [`sub_zones`] drops, is passed over.
+///
+/// No eC counterpart: the engine's `getSubZoneIndex` answers by its walk alone. The cost is
+/// one quantisation for each entry before the one sought, and the whole order for a zone that
+/// it does not hold; the caller bounds the length of the order.
+fn index_in_the_order(z: &Z, depth: u8, sub: &Address) -> Option<u64> {
+    let sz_level = sub.len() as u8;
+    let count = sub_zones_count(zone_npoints(z), i64::from(depth));
+    let mut found = None;
+    iterate_sub_zones(z, i64::from(depth), -1, &mut |index, centroid| {
+        let hit = u64::try_from(index)
+            .is_ok_and(|i| i < count && address_of_centroid(centroid, sz_level) == *sub);
+        if hit {
+            found = Some(index as u64);
+        }
+        !hit
+    });
+    found
 }
 
 #[cfg(test)]
@@ -2285,6 +2331,105 @@ mod tests {
             }
         }
         assert_eq!(entries, 3 * (13 + 55 + 379) + 5 * (11 + 46 + 316));
+    }
+
+    /// Where the engine's walk gives no index that the order confirms, in the broken seams and
+    /// below an identifier that is not the zone found at its own centroid (the child that a
+    /// pentagon lacks), the index is found in the order itself where the engine's own test of a
+    /// sub-zone accepts the zone: its first place there. Where that test refuses it, it has none,
+    /// as in the engine; and a zone that the order does not hold has none.
+    #[test]
+    fn an_entry_has_its_first_place_where_the_engines_test_accepts_it() {
+        // [entries asked, of those the entries whose index the walk does not give and that the
+        // engine's test accepts, and those that it refuses].
+        let mut tally = [0_usize; 3];
+        for text in [
+            "0000000000000000",
+            "0000000000000005",
+            "00000000000000000",
+            "0000000000000000136",
+            "0000000000000001644",
+            "00052626050026015",
+            "002",
+            "105",
+        ] {
+            let a = address(text);
+            let z = zone(text);
+            for depth in 1..=2_u8 {
+                if a.len() + usize::from(depth) >= 20 {
+                    continue;
+                }
+                let order = HexA7::sub_zones(&a, depth).unwrap();
+                for sub in order.iter().filter(|&&sub| sub != null_address()) {
+                    let first = order.iter().position(|s| s == sub).unwrap() as u64;
+                    let sz = zone_from_steps(sub.base, sub.digits());
+                    let walked = index_by_the_walk(&z, &sz);
+                    let confirmed = usize::try_from(walked).is_ok_and(|w| order[w] == *sub);
+                    let accepted = zone_has_sub_zone(&z, &sz);
+                    let expected = if confirmed {
+                        Some(walked as u64)
+                    } else {
+                        accepted.then_some(first)
+                    };
+                    assert_eq!(
+                        HexA7::sub_zone_index(&a, sub),
+                        Some(expected),
+                        "{} in {text} at depth {depth}",
+                        text_of(sub)
+                    );
+                    tally[0] += 1;
+                    tally[1] += usize::from(!confirmed && accepted);
+                    tally[2] += usize::from(!confirmed && !accepted);
+                }
+            }
+        }
+        assert_eq!(tally, [423, 61, 91]);
+
+        // The two entries of the order of `0000000000000005` at depth 1 for which the engine
+        // answers -1: the first refused by its test of a sub-zone, the second accepted.
+        let seam = address("0000000000000005");
+        for (sub, index) in [("00000000000000005", None), ("00000000000000055", Some(9))] {
+            assert_eq!(
+                HexA7::sub_zone_index(&seam, &address(sub)),
+                Some(index),
+                "{sub}"
+            );
+        }
+        // A zone that no order of the zone holds has no index, by the walk or by the order.
+        assert_eq!(
+            HexA7::sub_zone_index(&address("0064156"), &address("01000000")),
+            Some(None)
+        );
+
+        // The generator delivers its centroids in the order of their indices, which the search
+        // in the order takes for granted: at hexagons and pentagons of both parities, both
+        // poles and the seams, at depths 1 to 3.
+        for text in [
+            "00",
+            "10",
+            "11",
+            "000",
+            "110",
+            "0064156",
+            "00641565",
+            "0000000000000005",
+            "002",
+        ] {
+            for depth in 1..=3_i64 {
+                let mut indices = Vec::new();
+                iterate_sub_zones(&zone(text), depth, -1, &mut |index, _| {
+                    indices.push(index);
+                    true
+                });
+                assert!(
+                    indices
+                        .iter()
+                        .enumerate()
+                        .all(|(i, &index)| index == i as i64),
+                    "{text} at depth {depth}"
+                );
+            }
+        }
     }
 
     #[test]

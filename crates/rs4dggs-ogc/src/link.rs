@@ -9,7 +9,25 @@ use crate::json;
 /// type of the target.
 ///
 /// The writers take the links as the service gives them and judge none of them.
+///
+/// Built by [`Link::new`], with [`Link::with_title`] and [`Link::with_media_type`] for the
+/// members that may be absent; the type may gain fields in a later release, so that it is not
+/// built from its fields outside this crate.
+///
+/// ```
+/// use rs4dggs_ogc::{Link, rel};
+///
+/// let link = Link::new(rel::DGGRS_DEFINITION, "/dggrs/ISEA3H").with_media_type("application/json");
+/// assert_eq!((link.title, link.media_type), (None, Some("application/json")));
+/// ```
+///
+/// Built from its fields outside this crate, it does not compile:
+///
+/// ```compile_fail,E0639
+/// let link = rs4dggs_ogc::Link { rel: "self", href: "/", title: None, media_type: None };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Link<'a> {
     /// The relation type, in full: one of [`rel`] or any other.
     pub rel: &'a str,
@@ -22,7 +40,25 @@ pub struct Link<'a> {
 }
 
 /// A link template: a link whose target holds variables, such as `{zoneId}`.
+///
+/// Built by [`LinkTemplate::new`], with [`LinkTemplate::with_title`] for a title; the type may
+/// gain fields in a later release, so that it is not built from its fields outside this crate.
+///
+/// ```
+/// use rs4dggs_ogc::{LinkTemplate, rel};
+///
+/// let template = LinkTemplate::new(rel::DGGRS_ZONE_DATA, "/dggs/ISEA3H/zones/{zoneId}/data")
+///     .with_title("Data of a zone");
+/// assert_eq!(template.title, Some("Data of a zone"));
+/// ```
+///
+/// Built from its fields outside this crate, it does not compile:
+///
+/// ```compile_fail,E0639
+/// let template = rs4dggs_ogc::LinkTemplate { rel: "self", uri_template: "/{zoneId}", title: None };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LinkTemplate<'a> {
     /// The relation type, in full.
     pub rel: &'a str,
@@ -30,6 +66,53 @@ pub struct LinkTemplate<'a> {
     pub uri_template: &'a str,
     /// A title for the target, written when present.
     pub title: Option<&'a str>,
+}
+
+impl<'a> Link<'a> {
+    /// A link of relation type `rel` to `href`, without a title or a media type.
+    pub const fn new(rel: &'a str, href: &'a str) -> Self {
+        Self {
+            rel,
+            href,
+            title: None,
+            media_type: None,
+        }
+    }
+
+    /// The same link with the title `title`.
+    pub const fn with_title(self, title: &'a str) -> Self {
+        Self {
+            title: Some(title),
+            ..self
+        }
+    }
+
+    /// The same link with the media type `media_type`.
+    pub const fn with_media_type(self, media_type: &'a str) -> Self {
+        Self {
+            media_type: Some(media_type),
+            ..self
+        }
+    }
+}
+
+impl<'a> LinkTemplate<'a> {
+    /// A link template of relation type `rel` to `uri_template`, without a title.
+    pub const fn new(rel: &'a str, uri_template: &'a str) -> Self {
+        Self {
+            rel,
+            uri_template,
+            title: None,
+        }
+    }
+
+    /// The same template with the title `title`.
+    pub const fn with_title(self, title: &'a str) -> Self {
+        Self {
+            title: Some(title),
+            ..self
+        }
+    }
 }
 
 /// The relation types of OGC API - DGGS, written in full as the text of the standard's

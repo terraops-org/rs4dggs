@@ -105,7 +105,8 @@ echo "== fmt";     cargo fmt "${CRATES[@]}" --check
 # it, and the others do not. Each crate's oracle feature is its own; the qualified form
 # says so. In rs4dggs it reaches the inline oracle-dependent tests, in grid.rs,
 # topologies/hex_a7.rs, topologies/hex_a3.rs and topologies/hex_a3_subzones.rs, and the six
-# integration suites under tests/, one per grid; in rs4dggs-cli and rs4dggs-ogc, the suite that
+# suites under tests/, one per grid, which src/lib.rs includes among the library's own tests
+# (they ask its sealed trait methods); in rs4dggs-cli and rs4dggs-ogc, the suite that
 # compares each with DGGAL's own `dgg`,
 # so that clippy and test cover them here, in the one place the feature is meaningful,
 # exactly as they did before it existed.
