@@ -3,15 +3,16 @@ resolver = "3"
 members = [
   "crates/rs4dggs",
   "crates/rs4dggs-cli",
+  "crates/rs4dggs-ogc",
   "crates/dggal-oracle",
   "crates/dggal-oracle/vendor/ecrt-sys",
   "crates/dggal-oracle/vendor/ecrt",
   "crates/dggal-oracle/vendor/dggal-sys",
   "crates/dggal-oracle/vendor/dggal",
 ]
-# A bare `cargo test`, `cargo doc` or `cargo run --example` works on the library and the tool,
-# neither of which needs DGGAL; the gate names the crates it checks explicitly with -p.
-default-members = ["crates/rs4dggs", "crates/rs4dggs-cli"]
+# A bare `cargo test`, `cargo doc` or `cargo run --example` works on the library, the tool and
+# the encodings, none of which needs DGGAL; the gate names the crates it checks explicitly with -p.
+default-members = ["crates/rs4dggs", "crates/rs4dggs-cli", "crates/rs4dggs-ogc"]
 
 [workspace.package]
 version = "0.1.0"

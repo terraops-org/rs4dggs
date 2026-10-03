@@ -5,6 +5,8 @@
 # Switch it on once per clone:
 #   git config core.hooksPath .githooks
 #   git config rs4dggs.dggalSitePackages /path/to/site-packages   # the recorded DGGAL build
+# The gate with DGGAL also needs `python3` with the module `jsonschema` (pip install jsonschema),
+# for its check of zone data against the DGGS-JSON schema; the gate without DGGAL does not.
 # `git commit --no-verify` skips it when there is good reason.
 set -euo pipefail
 root=$(git rev-parse --show-toplevel)

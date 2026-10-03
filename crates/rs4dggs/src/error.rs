@@ -28,15 +28,26 @@ pub enum Error {
     /// `InvalidZoneError`, whose call sites already build their own detailed
     /// message (for instance, which text id was rejected and why), so the
     /// message travels as a plain `String` rather than a fixed template.
+    ///
+    /// It also answers a zone that an enumeration of the zones of a level is asked to be
+    /// entered after ([`crate::Zones::after`], [`crate::ZonesInBox::after`]) and that the
+    /// level does not hold: a zone of another level among them, which is a real zone and
+    /// still not one of that sequence.
     InvalidZone(String),
     /// A requested resolution outside `0..=max`, where `max` is the relevant
     /// `Indexing::MAX_RESOLUTION`. `res` is the same `u8` a caller passed in,
     /// carried as it stands rather than widened, since the two fields name
     /// the one quantity, a resolution level, and read most plainly of one type.
+    ///
+    /// From an enumeration of zones ([`crate::Grid::zones`], [`crate::Grid::zones_in_box`])
+    /// `max` is the limit of the enumeration, [`crate::Grid::max_box_level`], and not the
+    /// grid's last level: on the aperture-7 grids it is 14, where the grids themselves reach
+    /// 19, so that a level from 15 to 19 is refused there though the grid has it.
     ResolutionOutOfRange {
         /// The resolution requested.
         res: u8,
-        /// The finest resolution the grid offers.
+        /// The finest resolution the grid offers, or, from an enumeration of zones, the
+        /// finest level enumerated.
         max: u8,
     },
     /// A grid name with no matching entry in the registry, matched against
@@ -50,15 +61,22 @@ pub enum Error {
     /// request cannot be honoured at all. Unlike `neighbors` or the congruent
     /// hierarchy, it has no grid-agnostic substitute, since no grid-agnostic
     /// method can enumerate an arbitrary refinement in a canonical order.
+    ///
+    /// No grid that this crate ships returns it: the aperture-3 and the aperture-7
+    /// topologies both order their sub-zones, as the engine does. The variant stays for
+    /// a topology that does not.
     NoSubZoneOrder,
     /// Materialising every sub-zone at the requested depth would produce
     /// `count` zones, past the `limit` this crate is willing to allocate in
-    /// one call.
+    /// one call; or the index of a sub-zone was asked in an order so long. The
+    /// limit is [`crate::grid::max_materialised_sub_zones`]:
+    /// [`crate::grid::MAX_MATERIALISED_SUB_ZONES`], four million, unless the
+    /// environment variable `RS4DGGS_MAX_MATERIALISED_SUB_ZONES` lowers it.
     TooManySubZones {
         /// How many sub-zones the request would produce.
         count: u64,
-        /// The most this crate materialises in one call,
-        /// [`crate::grid::MAX_MATERIALISED_SUB_ZONES`].
+        /// The most this crate materialises in one call: the limit in force,
+        /// [`crate::grid::max_materialised_sub_zones`].
         limit: u64,
     },
     /// `index` is not a valid position among `count` sub-zones.
@@ -69,10 +87,12 @@ pub enum Error {
         count: u64,
     },
     /// A number the caller supplied is NaN or infinite, where only a finite one
-    /// has a meaning: a coordinate given to `zone_from_geo`, or a field of the
+    /// has a meaning: a coordinate given to `zone_from_geo`, a coordinate of the
+    /// bounding box given to [`crate::Grid::zones_in_box`] or
+    /// [`crate::Grid::estimate_zones_in_box`], or a field of the
     /// [`crate::GridConfig`] given to [`crate::Grid::new`]. `name` names the
-    /// parameter or field at fault, `"latitude"` or `"orientation_lat_deg"` for
-    /// instance; the value itself is not carried, since a non-finite value is
+    /// parameter or field at fault, `"latitude"`, `"south"` or `"orientation_lat_deg"`
+    /// for instance; the value itself is not carried, since a non-finite value is
     /// one of only three, and the parameter is what the caller must correct.
     ///
     /// DGGAL does not refuse a non-finite coordinate: it answers one fixed cell
@@ -83,6 +103,66 @@ pub enum Error {
     NonFinite {
         /// The parameter or field whose value is not finite.
         name: &'static str,
+    },
+    /// An edge refinement above `max`, the limit in force, asked of `refined_vertices`. The
+    /// limit is [`crate::grid::max_edge_refinement`]: [`crate::grid::MAX_EDGE_REFINEMENT`],
+    /// 100,000, unless the environment variable `RS4DGGS_MAX_EDGE_REFINEMENT` lowers it. A
+    /// refinement of 0 is never refused. The two fields are of the type the caller passed, as
+    /// in [`Error::ResolutionOutOfRange`].
+    ///
+    /// DGGAL sets no such bound: its refined boundary takes any `int`, a hexagon at a
+    /// refinement of 100,000 having 600,000 points, and beyond some 107 million the engine's
+    /// own count of divisions wraps. This crate refuses instead, above the greatest
+    /// refinement at which its boundary was compared with the engine's, and an operator may
+    /// lower that bound further.
+    EdgeRefinementOutOfRange {
+        /// The edge refinement requested.
+        refinement: u32,
+        /// The greatest edge refinement accepted.
+        max: u32,
+    },
+    /// A latitude of a bounding box beyond a pole, outside -90 to 90 degrees. `bits` are the
+    /// IEEE 754 bits of the latitude as the caller gave it, which `f64::from_bits` reads back
+    /// (the error holds no floating-point field, so that it stays comparable with `Eq`).
+    ///
+    /// DGGAL answers a box of this kind with something, or with nothing; this crate refuses it
+    /// instead, so that no caller takes a box beyond the poles for a box at them.
+    LatitudeOutOfRange {
+        /// The bits of the latitude, in degrees.
+        bits: u64,
+    },
+    /// A longitude of a bounding box outside -180 to 180 degrees. `bits` are as in
+    /// [`Error::LatitudeOutOfRange`].
+    ///
+    /// DGGAL answers such a box if its west lies below its east, and overflows its stack if
+    /// not; this crate refuses it in both cases, and a service that holds longitudes beyond
+    /// that range brings them within it before it asks.
+    LongitudeOutOfRange {
+        /// The bits of the longitude, in degrees.
+        bits: u64,
+    },
+    /// A bounding box whose south lies above its north. A west above the east is not an error:
+    /// the box then runs eastwards over the antimeridian. `south_bits` and `north_bits` are as
+    /// the bits in [`Error::LatitudeOutOfRange`].
+    InvertedBox {
+        /// The bits of the southern latitude, in degrees.
+        south_bits: u64,
+        /// The bits of the northern latitude, in degrees.
+        north_bits: u64,
+    },
+    /// Zones of more than one level, given to [`crate::Grid::compact_zones`], which compacts
+    /// the zones of one level. `level` is the level of the first zone of the slice and
+    /// `other` that of the first zone found of another.
+    ///
+    /// DGGAL's `compactZones` takes such a set and loses zones of it: a zone that has no
+    /// coarser zone to give way to is dropped as soon as the set holds a finer one, so that
+    /// its own answer, which is of several levels, is not a set that it compacts to itself.
+    /// This crate refuses the set instead, so that no caller loses a zone in silence.
+    MixedLevels {
+        /// The level of the first zone.
+        level: u8,
+        /// The level of the first zone of another level.
+        other: u8,
     },
 }
 
@@ -151,6 +231,32 @@ impl fmt::Display for Error {
                 )
             }
             Error::NonFinite { name } => write!(f, "{name} is not a finite number"),
+            Error::EdgeRefinementOutOfRange { refinement, max } => {
+                write!(f, "edge refinement {refinement} out of range 0 to {max}")
+            }
+            Error::LatitudeOutOfRange { bits } => write!(
+                f,
+                "latitude {} is outside -90 to 90 degrees",
+                f64::from_bits(*bits)
+            ),
+            Error::LongitudeOutOfRange { bits } => write!(
+                f,
+                "longitude {} is outside -180 to 180 degrees",
+                f64::from_bits(*bits)
+            ),
+            Error::InvertedBox {
+                south_bits,
+                north_bits,
+            } => write!(
+                f,
+                "the box's south latitude {} lies above its north latitude {}",
+                f64::from_bits(*south_bits),
+                f64::from_bits(*north_bits)
+            ),
+            Error::MixedLevels { level, other } => write!(
+                f,
+                "the zones are of more than one level: {level} and {other}"
+            ),
         }
     }
 }
@@ -211,5 +317,40 @@ mod tests {
     fn non_finite_names_the_parameter() {
         let e = Error::NonFinite { name: "latitude" };
         assert_eq!(e.to_string(), "latitude is not a finite number");
+    }
+
+    #[test]
+    fn an_edge_refinement_out_of_range_names_both_numbers() {
+        let e = Error::EdgeRefinementOutOfRange {
+            refinement: 100_001,
+            max: 100_000,
+        };
+        assert_eq!(
+            e.to_string(),
+            "edge refinement 100001 out of range 0 to 100000"
+        );
+    }
+
+    #[test]
+    fn the_box_refusals_name_the_offending_values() {
+        let e = Error::LatitudeOutOfRange {
+            bits: 91.5f64.to_bits(),
+        };
+        assert_eq!(e.to_string(), "latitude 91.5 is outside -90 to 90 degrees");
+        let e = Error::LongitudeOutOfRange {
+            bits: (-181.0f64).to_bits(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "longitude -181 is outside -180 to 180 degrees"
+        );
+        let e = Error::InvertedBox {
+            south_bits: 40.0f64.to_bits(),
+            north_bits: 30.0f64.to_bits(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "the box's south latitude 40 lies above its north latitude 30"
+        );
     }
 }

@@ -1,0 +1,139 @@
+{
+   "$schema" : "https://json-schema.org/draft/2020-12/schema",
+   "$id" : "https://schemas.opengis.net/ogcapi/dggs/part1/1.0/openapi/schemas/dggs-json/schema",
+   "type": "object",
+   "properties":
+   {
+      "dggrs" : { "type": "string", "format": "uri" },
+      "zoneId" : { "type": "string" },
+      "depths" : { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+      "schema" : { "$ref": "https://json-schema.org/draft/2020-12/schema" },
+      "dimensions" :
+      {
+         "type": "array",
+         "items":
+         {
+            "type": "object",
+            "properties":
+            {
+               "name": { "type": "string" },
+               "definition": { "type": "string", "format": "uri" },
+               "unit": { "type": "string" },
+               "unitLang": { "type": "string", "format": "uri" },
+               "grid":
+               {
+                  "required": [ "cellsCount" ],
+                  "oneOf": [
+                      { "required": [ "resolution", "firstCoordinate" ] },
+                      { "required": [ "coordinates" ] }
+                  ],
+                  "type": "object",
+                  "properties":
+                  {
+                     "boundsCoordinates": {
+                        "items": {
+                           "type": "array",
+                           "items": {
+                              "oneOf": [
+                                 { "nullable": true, "type": "number" },
+                                 { "nullable": true, "type": "string" }
+                              ]
+                           },
+                           "maxItems": 2,
+                           "minItems": 2
+                        },
+                        "type": "array"
+                     },
+                     "cellsCount" : { "type": "integer" },
+                     "resolution" : {
+                        "oneOf": [
+                           { "type": "number" },
+                           { "type": "string" }
+                        ]
+                     },
+                     "firstCoordinate": {
+                        "oneOf": [
+                           { "type": "number" },
+                           { "type": "string" }
+                        ]
+                     },
+                     "relativeBounds": {
+                        "items": {
+                           "oneOf": [
+                              { "type": "number" },
+                              { "type": "string" }
+                           ]
+                        },
+                        "maxItems": 2,
+                        "minItems": 2,
+                        "type": "array"
+                     },
+                     "coordinates": {
+                        "type": "array",
+                        "items": {
+                           "oneOf": [
+                              { "type": "number" },
+                              { "type": "string" }
+                           ]
+                        }
+                     }
+                  }
+               },
+               "interval": {
+                  "type": "array",
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "items": {
+                     "oneOf": [
+                        { "type": "number", "nullable": true },
+                        { "type": "string", "nullable": true }
+                     ]
+                  }
+               }
+            },
+            "required": [ "name", "interval", "grid" ]
+         }
+      },
+      "values" :
+      {
+         "additionalProperties":
+         {
+            "type": "array",
+            "items":
+            {
+               "type": "object",
+               "required": [ "data" ],
+               "properties":
+               {
+                  "depth": { "type": "integer" },
+                  "shape":
+                  {
+                     "type": "object",
+                     "properties":
+                     {
+                        "count": { "type": "integer" },
+                        "subZones": { "type": "integer" },
+                        "dimensions":
+                        {
+                           "type": "object",
+                           "additionalProperties": { "type": "integer" }
+                        }
+                     },
+                     "required": [ "count", "subZones" ]
+                  },
+                  "data":
+                  {
+                     "type": "array",
+                     "items":
+                     {
+                        "type": "number",
+                        "nullable": true
+                     }
+                  }
+               }
+            }
+         }
+      }
+   },
+   "required": [ "dggrs", "zoneId", "depths", "values" ]
+}

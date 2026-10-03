@@ -113,7 +113,7 @@
 //! the departure where a caller meets it. There are three such inputs, and each is
 //! re-checked against the live engine on every run, by
 //! `refusals_depart_from_the_engine_as_recorded` and, for the null zone's sub-zone
-//! index, by `sub_zone_methods_refuse_on_aperture_7`:
+//! index, by `sub_zones_at_depth_1_as_the_engine_lists_them`:
 //! - a latitude or longitude that is NaN or infinite, which the engine answers with the
 //!   pentagon of base cell 1 at the requested resolution, whatever the input
 //!   ([`engine_answer_to_a_non_finite_coordinate`]);
@@ -134,7 +134,7 @@
 //! 0 before it looks at either zone (`getSubZoneIndex`, `RI7H.ec:229-230`), so that it
 //! reports a zone's neighbour as its sub-zone at index 0. This crate answers `None`,
 //! since at depth 0 a zone's only sub-zone is the zone itself. The divergence is
-//! re-checked against the live engine by `sub_zone_methods_refuse_on_aperture_7`, for a
+//! re-checked against the live engine by `sub_zones_at_depth_1_as_the_engine_lists_them`, for a
 //! neighbour of every zone of its sample that has one.
 //!
 //! **On aperture 3 the engine cannot read back its own answer along two seams.** A point
@@ -167,10 +167,68 @@
 //! descendants, each once, in the generator's own scanline order. At every order in which the
 //! two differ, [`engine_sub_zone_order_is_faulty`] re-checks both sides by the engine's own
 //! tests: the engine's order fails them, and this crate's passes them.
+//!
+//! **The sub-zone order of the aperture-7 grids** is the engine's own, entry for entry, and
+//! departs from it in five ways, each this crate's stated answer and each re-checked against
+//! the live engine by `common::sub_zone_order`:
+//! - an entry that the engine gives as an identifier which it cannot read back is the null
+//!   zone here, at the same place, as an entry that is the engine's null zone is; this is
+//!   met at the broken seams alone, from sub-zones of level 15, and counted by level;
+//! - the first sub-zone at depth 0 is the zone itself, where the engine's `getFirstSubZone`
+//!   names a neighbour of the zone, or its null zone, at all but a few zones;
+//! - the zone at an index is the entry of the order at that index. The engine's
+//!   `getSubZoneAtIndex` answers another zone at a pentagon at an odd depth, from the
+//!   scanline after the pentagon's own; it is not asked here, since the vendored binding
+//!   declares the call without its depth, and the comparison is with the engine's order;
+//! - the first sub-zone of the pentagon of the south pole at an odd level, at depth 2, is
+//!   the first entry of the engine's order, where the engine's `getFirstSubZone` ends the
+//!   process ([`engine_first_sub_zone_ends_the_process`]): the call is not made there, and
+//!   the orders it is kept from are counted;
+//! - the index of a sub-zone is the engine's `getSubZoneIndex` wherever the order holds the
+//!   zone at that index, and none otherwise. At the broken seams the engine's walk, which
+//!   compares centroids, answers for some zones an index at which its own order names
+//!   another zone; such a zone has no index here, and each is counted by level. Where the
+//!   engine answers -1 for a zone that its order names, there is none here either, and
+//!   those are counted too. The index is not sought in an order longer than a list may be,
+//!   where the engine walks an order of any length; the suites ask none so long.
+//!
+//! No order longer than [`LONGEST_ORDER_ASKED`] is asked of the engine, which ends the
+//! process at `2^28` sub-zones on these grids.
+//!
+//! **Identifiers this crate has no geometry for.** A zone without geometry (the null zone, a Z7
+//! identifier of twenty digits, an identifier that no cell of the grid has behind it, and on
+//! aperture 3 the sub-hexes C and D of a polar root, which the engine reads and this crate takes
+//! for no cell) answers the empty ring, no extent and no area. The engine answers
+//! each in its own way, and [`NoGeometry`] names the four: the null zone (the cleared extent, the
+//! area `+inf`); an identifier it does not draw (the cleared extent, no ring, a finite area);
+//! the same with the area `+inf`, where its count of zones leaves a divisor of zero; and the
+//! polar sub-hexes, which it draws, with a ring, a finite extent and a finite area, so that all
+//! three answers depart. Each is classified by [`engine_answers_without_geometry`], which
+//! re-checks the engine's side live at every instance, and the instances are counted exactly, per
+//! grid, by `geometry::the_refined_boundary_and_the_extent_are_the_engines`, which asserts that
+//! each is met and that the three answers of this crate are the empty ones. On aperture 3 the
+//! ring of an identifier the engine cannot read is not asked of it: its answer is a null array,
+//! on which the vendored binding crashes.
+//!
+//! **The zones of a box.** `zones_in_box` yields every zone of the level whose extent meets the
+//! box, by the engine's own test of two extents, where the engine's `listZones` leaves some of
+//! them out. On the aperture-3 grids the engine looks for zones about a sample of points of the
+//! box, and misses a zone that belongs to another rhombus than the one its samples fall in: the
+//! one zone of level 2 that holds the whole box about Lisbon, and every zone of a small cap
+//! about a pole, for which it returns nothing at all. On the aperture-7 grids it descends from
+//! the twelve base cells, and was measured to miss one zone in six boxes of some forty
+//! thousand; the suites' boxes meet none. Wherever the two answers differ,
+//! [`engine_omits_zones_of_a_box`] re-checks the evidence against the live engine: its answer
+//! is this crate's less some zones, in the same order, and each zone it leaves out meets the
+//! box by the engine's own extent of it, so that by the engine's own rule the zone belongs
+//! there. The instances are counted exactly, per grid and by kind of box, by
+//! `zones::the_zones_of_a_box_are_the_engines_and_those_it_leaves_out`, and the boxes known by
+//! name by `zones::the_boxes_known_by_name_depart_from_the_engine_as_recorded`.
 
 use dggal_oracle as o;
 use rs4dggs::ZoneId;
 
+use super::boxes;
 use super::subject::Subject;
 use super::unresolved::regions;
 use super::{arc_deg, dist_to_arc_deg, icosahedron_vertices, nudge};
@@ -517,6 +575,15 @@ pub fn lookup(grid: &str, lat: f64, lon: f64, res: u8) -> Option<&'static Diverg
 /// cover. It now bounds the two quantisation rules alone, whose inputs lie within the
 /// strip's own width of 7.5e-5 degrees and, for the answers the engine cannot read back,
 /// within 5.73e-5; the bound is left as it stands, twice that width.
+///
+/// Since 2026-10-02 the band bounds a third thing: every zone that the comparison of the
+/// aperture-7 hierarchy counts in a class of the broken seams (an entry left out of its
+/// parents or of its children, a child that names other parents, no parent, and the rest)
+/// must have its centroid within it. Measured then: among the zones that positions give,
+/// within 1.11e-5 degrees of an edge on IGEO7, 1.10e-5 on IVEA7H and 1.12e-5 on RTEA7H
+/// (49, 39 and 38 zones); among the identifiers built by text under base cell 0, at levels
+/// 14 to 19, within 8.28e-5 on IGEO7, 7.98e-5 on IVEA7H and 7.67e-5 on RTEA7H (329 zones
+/// on each), and the same reaches over every such identifier with a tail of five digits.
 pub const BROKEN_SEAM_BAND_DEG: f64 = 1.5e-4;
 
 /// The two icosahedron edges along which the engine's odd resolutions from 15 have a
@@ -1101,10 +1168,24 @@ pub fn engine_null_zone_geometry<S: Subject>() -> Result<(), String> {
     }
 }
 
-/// The largest sub-zone order that [`engine_sub_zone_order_is_faulty`] asks the engine for
-/// whole: well below the `2^28` sub-zones at which its `getSubZones` answers nothing, and quick
+/// The largest sub-zone order that the engine is asked for whole, by
+/// [`engine_sub_zone_order_is_faulty`] on aperture 3 and by the comparison of the orders on
+/// aperture 7 (`common::sub_zone_order`): well below the `2^28` sub-zones at which its
+/// `getSubZones` answers nothing on aperture 3 and ends the process on aperture 7, and quick
 /// to build.
 pub const LONGEST_ORDER_ASKED: u64 = 1 << 20;
+
+/// Whether the aperture-7 engine's `getFirstSubZone` of `id` at `depth` ends the process: at
+/// the pentagon of the south pole (base cell 11, every digit 0) of an odd level, at depth 2,
+/// where it subtracts through a null pointer (`RI7H.ec:3246-3255`). No Rust mechanism can
+/// catch that, so the call is not made there, and the comparison of the orders counts the
+/// pairs it leaves out. The engine's `getSubZones` answers at the same pairs, and its first
+/// entry is what this crate's `first_sub_zone` is held to.
+pub fn engine_first_sub_zone_ends_the_process<S: Subject>(id: ZoneId, depth: u8) -> bool {
+    let text = S::grid().text_id(id);
+    let (base, digits) = text.split_at(2);
+    depth == 2 && base == "11" && digits.len() % 2 == 1 && digits.bytes().all(|d| d == b'0')
+}
 
 /// What is wrong with the aperture-3 engine's sub-zone order of a zone, by its own tests: the
 /// places that repeat a zone already named; the distinct zones that its `zoneHasSubZone`
@@ -1235,4 +1316,223 @@ pub fn engine_sub_zone_order_is_faulty<S: Subject>(
 pub fn aperture_3_engine_answer_to_a_non_finite_coordinate(res: u8) -> String {
     let sub_hex = if res % 2 == 0 { 'A' } else { 'B' };
     format!("{}0-0-{sub_hex}", char::from(b'A' + res / 2))
+}
+
+/// How the engine answers an identifier for which this crate has no geometry, whose ring is
+/// the empty one, whose extent and whose area are `None`. Each is a departure of
+/// this crate from the engine in at least one of the three answers, and the engine's side of
+/// each is re-checked live by [`engine_answers_without_geometry`] at every instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NoGeometry {
+    /// The null zone: the engine gives it no ring and the cleared extent, as this crate does,
+    /// and the area `+inf`, where this crate gives none.
+    NullZone,
+    /// An identifier the engine does not draw: no ring (empty on aperture 7, null and so not
+    /// asked on aperture 3), the cleared extent, and the area of the formula of its level, a
+    /// finite number. On aperture 7, a Z7 identifier of twenty digits; on aperture 3, an
+    /// identifier it cannot read back from its own text. The ring and the extent agree with
+    /// this crate's; the area does not.
+    Undrawn,
+    /// As [`NoGeometry::Undrawn`], with the area `+inf` where the engine's count of the zones
+    /// of the level leaves a divisor of zero: an identifier with no cell behind it.
+    UndrawnWithoutArea,
+    /// A zone the engine reads and draws, ring, extent and area, and for which this crate has
+    /// no cell: the sub-hexes C and D of a polar root of aperture 3. All three answers depart.
+    Drawn,
+}
+
+/// What the engine answers for the identifier `id` of the grid under test, asked of the live
+/// engine: whether its ring was asked (on aperture 3, only where the engine can read the
+/// identifier), the points of that ring, whether its extent is the cleared one, and its area.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EngineAnswers {
+    pub ring_asked: bool,
+    pub ring_points: usize,
+    pub extent_cleared: bool,
+    pub extent_is_finite: bool,
+    pub area: f64,
+}
+
+/// The engine's three answers for `id`, one oracle call for each, none inside another.
+pub fn engine_answers<S: Subject>(id: u64) -> EngineAnswers {
+    use rs4dggs::Topology;
+    let x = f64::from_bits(0x7f91_df46_a252_9d38);
+    let ring_asked = S::T::APERTURE != 3 || o::engine_can_read(S::ORACLE, id);
+    let ring_points = if ring_asked {
+        o::refined_vertices(S::ORACLE, id, 0).len()
+    } else {
+        0
+    };
+    let extent = o::extent(S::ORACLE, id);
+    let cleared = [x, x, -x, -x].map(f64::to_bits);
+    EngineAnswers {
+        ring_asked,
+        ring_points,
+        extent_cleared: extent.map(f64::to_bits) == cleared,
+        extent_is_finite: extent.iter().all(|m| m.is_finite() && m.abs() < 4.0),
+        area: o::area(S::ORACLE, id),
+    }
+}
+
+/// The sub-hexes C and D of the two polar roots of aperture 3 at the odd levels 1 to 33, as the
+/// engine reads them from their text: this crate has no cell for any. 68 of them. The only
+/// identifiers that [`NoGeometry::Drawn`] admits.
+pub fn polar_sub_hexes<S: Subject>() -> Vec<u64> {
+    use rs4dggs::Topology;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    // There are none on aperture 7, where the text `AA-0-C` is not an identifier. On aperture 3
+    // the list is built once per grid, the first time it is asked for.
+    static BUILT: OnceLock<Mutex<HashMap<&'static str, Vec<u64>>>> = OnceLock::new();
+    if S::T::APERTURE != 3 {
+        return Vec::new();
+    }
+    let mut built = BUILT.get_or_init(Default::default).lock().unwrap();
+    built
+        .entry(S::ORACLE)
+        .or_insert_with(|| {
+            let mut ids = Vec::new();
+            for level in 0..=16u8 {
+                for root in ['A', 'B'] {
+                    for sub_hex in ['C', 'D'] {
+                        let text = format!("{}{root}-0-{sub_hex}", char::from(b'A' + level));
+                        let id = o::zone_from_text(S::ORACLE, &text);
+                        assert_ne!(id, o::NULL_ZONE, "the engine no longer reads {text}");
+                        ids.push(id);
+                    }
+                }
+            }
+            ids
+        })
+        .clone()
+}
+
+/// Whether `id` belongs to the class of identifiers the engine does not draw, which
+/// [`NoGeometry::Undrawn`] and [`NoGeometry::UndrawnWithoutArea`] admit: the fabricated
+/// identifiers; on aperture 7 a Z7 identifier of level 20; on aperture 3 an identifier of a polar
+/// root (10 or 11) with a non-zero index that the engine cannot read, the class its quantiser
+/// hands out along two seams.
+fn in_the_undrawn_class<S: Subject>(id: u64) -> bool {
+    use rs4dggs::Topology;
+    if id != o::NULL_ZONE && FABRICATED.contains(&id) {
+        return true;
+    }
+    match S::T::APERTURE {
+        7 => o::level(S::ORACLE, id) == 20,
+        _ => (id >> 53) & 0xF >= 10 && !o::engine_can_read(S::ORACLE, id),
+    }
+}
+
+/// The kind of the departure at `id`, an identifier this crate has no geometry for, with the
+/// engine's side of it re-checked live; or what failed. The evidence of each kind:
+/// - the null zone: the cleared extent, the area `+inf`, no ring at any refinement from 0 to 3
+///   where it is asked;
+/// - an identifier the engine does not draw: the cleared extent, no ring where it is asked, a
+///   finite and positive area, or `+inf` for one with no cell behind it; and the identifier is
+///   of the class ([`in_the_undrawn_class`]), so that an ordinary zone left empty fails here;
+/// - one the engine draws: a ring of at least five points, a finite extent, a finite and
+///   positive area, and the identifier is one of [`polar_sub_hexes`], so that on aperture 7
+///   nothing is `Drawn` and an ordinary zone left empty fails here, naming the zone.
+pub fn engine_answers_without_geometry<S: Subject>(id: u64) -> Result<NoGeometry, String> {
+    let a = engine_answers::<S>(id);
+    let at = format!("{id:#018x} on {}: {a:?}", S::NAME);
+    if !a.ring_asked || a.ring_points == 0 {
+        // No ring, or one not asked: the engine does not draw it.
+        if a.ring_asked {
+            for r in 1..=3 {
+                if !o::refined_vertices(S::ORACLE, id, r).is_empty() {
+                    return Err(format!("{at}: no ring at 0 and one at a refinement of {r}"));
+                }
+            }
+        }
+        if !a.extent_cleared {
+            return Err(format!(
+                "{at}: no ring and an extent that is not the cleared one"
+            ));
+        }
+        if id == o::NULL_ZONE {
+            return if a.area == f64::INFINITY {
+                Ok(NoGeometry::NullZone)
+            } else {
+                Err(format!("{at}: the null zone's area is not +inf"))
+            };
+        }
+        if !in_the_undrawn_class::<S>(id) {
+            return Err(format!(
+                "{at}: not of the class of identifiers the engine does not draw"
+            ));
+        }
+        return if a.area == f64::INFINITY {
+            Ok(NoGeometry::UndrawnWithoutArea)
+        } else if a.area.is_finite() && a.area > 0.0 {
+            Ok(NoGeometry::Undrawn)
+        } else {
+            Err(format!("{at}: an area that is neither finite nor +inf"))
+        };
+    }
+    if a.ring_points >= 5
+        && a.extent_is_finite
+        && !a.extent_cleared
+        && a.area.is_finite()
+        && a.area > 0.0
+        && id != o::NULL_ZONE
+        && polar_sub_hexes::<S>().contains(&id)
+    {
+        Ok(NoGeometry::Drawn)
+    } else {
+        Err(format!("{at}: not an answer of any recorded kind"))
+    }
+}
+
+/// The rule for an answer of this crate to a box that differs from the engine's `listZones`.
+/// `ours` and `theirs` are the two answers for the box `bbox`, in degrees, at `level`. It holds
+/// only when all of the evidence holds, checked against the live engine now:
+/// - the two answers differ, and the engine's is this crate's less some zones: every zone of
+///   the engine's is found in this crate's, in the same order;
+/// - each zone that the engine leaves out is one it reads back, of the level asked, and its
+///   extent, the engine's own, meets the box by the engine's own test of two extents
+///   ([`boxes::meets`]).
+///
+/// The engine then leaves out zones that its own rule puts in the box, and this crate's answer
+/// is the consistent one. How many it leaves out is returned. A zone of the engine's that this
+/// crate lacks is never admitted.
+pub fn engine_omits_zones_of_a_box<S: Subject>(
+    level: u8,
+    bbox: &[f64; 4],
+    ours: &[u64],
+    theirs: &[u64],
+) -> Result<usize, String> {
+    if ours == theirs {
+        return Err("the two answers are one, and nothing departs".into());
+    }
+    let mut rest = ours.iter();
+    if let Some(&lacking) = theirs.iter().find(|&&t| !rest.any(|&z| z == t)) {
+        return Err(format!(
+            "{} is in the engine's answer of {} zones and not, at its place, in this crate's of {}",
+            o::text_id(S::ORACLE, lacking),
+            theirs.len(),
+            ours.len()
+        ));
+    }
+    let theirs: std::collections::HashSet<u64> = theirs.iter().copied().collect();
+    let r = boxes::radians(bbox);
+    let mut left_out = 0;
+    for &zone in ours.iter().filter(|z| !theirs.contains(z)) {
+        let text = o::text_id(S::ORACLE, zone);
+        if !o::engine_can_read(S::ORACLE, zone) {
+            return Err(format!("the engine cannot read {text} back"));
+        }
+        if o::level(S::ORACLE, zone) != i32::from(level) {
+            return Err(format!("{text} is not of level {level}"));
+        }
+        let extent = o::extent(S::ORACLE, zone);
+        if !boxes::meets(&extent, &r) {
+            return Err(format!(
+                "{text} is not in the engine's answer, and its extent {extent:?}, the engine's \
+                 own, does not meet the box {r:?}"
+            ));
+        }
+        left_out += 1;
+    }
+    Ok(left_out)
 }

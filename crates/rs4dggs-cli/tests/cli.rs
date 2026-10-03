@@ -108,9 +108,12 @@ fn zone_card_on_igeo7() {
         "{out}"
     );
     assert!(out.contains("  resolution  10, hexagon\n"), "{out}");
-    assert!(out.contains("  parents     1: 00641565463\n"), "{out}");
     assert!(
-        out.contains("  children    7: 0064156546360 (centre), 0064156546361,"),
+        out.contains("  parents     2: 00641565463, 00641565462\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("  children    13: 0064156546360 (centre), 0064156546361, 0064156546365, 0064156546364, 0064156546366, 0064156546362, 0064156546363, 0064156546342, 0064156546033, 0064156546251, 0064156546215, 0064156546324, 0064156546306\n"),
         "{out}"
     );
     assert!(out.contains("  neighbours  6: 006415654634, 006415654603, 006415654625, 006415654621, 006415654632, 006415654630\n"), "{out}");
@@ -179,8 +182,6 @@ fn input_errors_exit_1() {
         (&["isea3h", "info", "Z9-0-A"], "ISEA3H"),
         (&["igeo7", "info", "0064156546360000000000"], "IGEO7"),
         (&["igeo7", "info", "0xZZ"], "hexadecimal"),
-        (&["igeo7", "sub", "006415654636"], "sub-zone order"),
-        (&["igeo7", "index", "0064156", "00641565"], "sub-zone order"),
         (&["isea3h", "sub", "A4-0-A", "-depth", "20"], "-depth"),
     ] {
         let (code, _, err) = run(args, "");
@@ -225,7 +226,21 @@ fn neighbours_disk_rel_sub_index() {
     let (code, out, _) = run(&["isea3h", "index", "A4-0-A", "B6-5-C"], "");
     assert_eq!(
         (code, out.as_str()),
-        (0, "B6-5-C is not a sub-zone of A4-0-A\n")
+        (0, "B6-5-C has no index among the sub-zones of A4-0-A\n")
+    );
+    // The aperture-7 grids order their sub-zones as well, in the engine's own scanlines.
+    let (code, out, _) = run(&["igeo7", "sub", "006415654636"], "");
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.starts_with(
+            "IGEO7 zone 006415654636: 13 sub-zones at depth 1\n      0  0064156546306\n      1  0064156546342\n"
+        ),
+        "{out}"
+    );
+    let (code, out, _) = run(&["igeo7", "index", "0064156", "00641565"], "");
+    assert_eq!(
+        (code, out.as_str()),
+        (0, "00641565 is sub-zone 5 of 0064156, at depth 1\n")
     );
 }
 
@@ -534,15 +549,41 @@ fn text_answers_stream() {
 }
 
 #[test]
-fn a_lone_parent_is_marked_on_aperture_3_and_never_on_aperture_7() {
+fn the_parent_that_is_a_centroid_child_is_marked_on_both_apertures() {
     let (code, out, err) = run(&["isea3h", "zone", "0.5,0.25", "7"], "");
     assert_eq!(code, 0, "{err}");
     assert!(
         out.contains("  parents     1: D4-FC-A (centroid parent)\n"),
         "{out}"
     );
-    let (_, out, _) = run(&["igeo7", "zone", "0.5,0.25", "7"], "");
-    assert!(!out.contains("centroid parent"), "{out}");
+    // On aperture 7 as well: of two parents the one that is itself a centroid child, in
+    // whichever place the list has it; a lone parent that is one; and none where no parent is.
+    for (zone, parents) in [
+        (
+            "00641565463601",
+            "2: 0064156546360 (centroid parent), 0064156546361",
+        ),
+        (
+            "00641565463652",
+            "2: 0064156546365, 0064156546360 (centroid parent)",
+        ),
+        ("00641565463600", "1: 0064156546360 (centroid parent)"),
+        ("0064156546360", "1: 006415654636"),
+        ("006415654636", "2: 00641565463, 00641565462"),
+    ] {
+        let (code, out, err) = run(&["igeo7", "info", zone], "");
+        assert_eq!(code, 0, "{zone}: {err}");
+        assert!(
+            out.contains(&format!("  parents     {parents}\n")),
+            "{zone}: {out}"
+        );
+    }
+    // The CSV names the parents, in the same order, without the mark.
+    let (_, out, _) = run(&["igeo7", "info", "00641565463601", "-f", "csv"], "");
+    assert_eq!(
+        out.lines().nth(1).unwrap().split(',').next_back(),
+        Some("0064156546360 0064156546361")
+    );
 }
 
 #[test]
@@ -555,7 +596,187 @@ fn examples_are_zones_of_the_grid_asked_about() {
     assert_eq!(code, 2);
     assert!(err.contains("rs4dggs isea3h geom C2-23-C"), "{err}");
     let (_, _, err) = run(&["igeo7", "sub"], "");
-    assert!(err.contains("rs4dggs isea3h sub A4-0-A"), "{err}");
+    assert!(err.contains("rs4dggs igeo7 sub 0064156 -depth 2"), "{err}");
+    let (_, _, err) = run(&["rtea7h", "index", "0064156"], "");
+    assert!(
+        err.contains("rs4dggs rtea7h index 0064156 006415600"),
+        "{err}"
+    );
+}
+
+#[test]
+fn the_examples_of_sub_and_index_run_on_every_grid() {
+    for (grids, zone, depth, index, sub) in [
+        (
+            ["igeo7", "ivea7h", "rtea7h"],
+            "0064156",
+            "2",
+            "27",
+            "006415600",
+        ),
+        (["isea3h", "ivea3h", "rtea3h"], "A4-0-A", "3", "8", "B2-5-C"),
+    ] {
+        for g in grids {
+            let (code, out, _) = run(&[g, "help", "sub"], "");
+            assert_eq!(code, 0);
+            for example in [
+                format!("  rs4dggs {g} sub {zone} -depth {depth}\n"),
+                format!("  rs4dggs {g} sub {zone} {index} -depth {depth}\n"),
+            ] {
+                assert!(out.contains(&example), "{g}: {out}");
+            }
+            let (_, out, _) = run(&[g, "help", "index"], "");
+            assert!(
+                out.contains(&format!("  rs4dggs {g} index {zone} {sub}\n")),
+                "{g}: {out}"
+            );
+            // What the examples answer: a list, the sub-zone at the index, and that index back.
+            let (code, out, err) = run(&[g, "sub", zone, "-depth", depth], "");
+            assert_eq!(code, 0, "{g}: {err}");
+            assert!(out.contains(&format!("{index:>7}  {sub}\n")), "{g}: {out}");
+            let (code, out, err) = run(&[g, "sub", zone, index, "-depth", depth], "");
+            assert_eq!(code, 0, "{g}: {err}");
+            assert_eq!(
+                out,
+                format!("sub-zone {index} of {zone} at depth {depth}: {sub}\n")
+            );
+            let (code, out, err) = run(&[g, "index", zone, sub], "");
+            assert_eq!(code, 0, "{g}: {err}");
+            assert_eq!(
+                out,
+                format!("{sub} is sub-zone {index} of {zone}, at depth {depth}\n")
+            );
+        }
+    }
+}
+
+#[test]
+fn no_help_confines_the_hierarchy_or_the_sub_zones_to_one_aperture() {
+    let (_, general, _) = run(&["help"], "");
+    for line in general.lines() {
+        let command = line.starts_with("  sub ") || line.starts_with("  index ");
+        assert!(!(command && line.contains("aperture")), "{line}");
+    }
+    assert!(general.contains("\n  sub <zone> [index] "), "{general}");
+    for g in ["igeo7", "ivea7h", "rtea7h", "isea3h", "ivea3h", "rtea3h"] {
+        for command in ["sub", "index", "info"] {
+            let (code, out, _) = run(&[g, "help", command], "");
+            assert_eq!(code, 0, "{g} {command}");
+            let lower = out.to_lowercase();
+            for gone in ["aperture 3 only", "congruent", "defined yet", "isea3h sub"] {
+                assert!(
+                    g == "isea3h" && gone == "isea3h sub" || !lower.contains(gone),
+                    "{g} help {command} says {gone:?}: {out}"
+                );
+            }
+        }
+    }
+    // The card's help says what the hierarchy of that grid's aperture is.
+    let (_, out, _) = run(&["igeo7", "help", "info"], "");
+    assert!(
+        out.contains("one parent or two") && out.contains("thirteen children"),
+        "{out}"
+    );
+    let (_, out, _) = run(&["isea3h", "help", "info"], "");
+    assert!(
+        out.contains("one parent or three") && out.contains("seven children"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_position_of_an_order_that_holds_no_zone_is_printed_as_no_cell() {
+    // Along one of the two broken seams of the aperture-7 grids, 99 of the 17,053 positions of
+    // this order hold the null zone, the first of them position 204.
+    let (code, out, err) = run(&["igeo7", "sub", "010004000400", "-depth", "5"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.starts_with("IGEO7 zone 010004000400: 17053 sub-zones at depth 5\n"),
+        "{}",
+        &out[..200]
+    );
+    let entries: Vec<&str> = out.lines().skip(1).collect();
+    assert_eq!(entries.len(), 17053);
+    assert_eq!(entries[203], "    203  01000400040032330");
+    assert_eq!(entries[204], "    204  (no cell)");
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|l| l.ends_with("  (no cell)"))
+            .count(),
+        99
+    );
+    assert!(
+        !out.contains("null"),
+        "the library's own text for the null zone is printed"
+    );
+    let (code, out, err) = run(&["igeo7", "sub", "010004000400", "204", "-depth", "5"], "");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "sub-zone 204 of 010004000400 at depth 5: (no cell)\n");
+    // An order is written as text alone, so no other format has such a position to write.
+    for format in ["csv", "geojson"] {
+        let args = ["igeo7", "sub", "010004000400", "-depth", "5", "-f", format];
+        let (code, out, err) = run(&args, "");
+        assert_eq!((code, out.as_str()), (2, ""), "{format}: {err}");
+        assert!(err.contains("sub writes text"), "{format}: {err}");
+    }
+}
+
+#[test]
+fn rel_follows_the_hierarchy_of_the_grid_on_aperture_7() {
+    // A zone under two parents is an immediate child of each, and a sub-zone of each.
+    for (parent, index) in [("00641565463", 10), ("00641565462", 1)] {
+        let (code, out, err) = run(&["igeo7", "rel", parent, "006415654636"], "");
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(
+            out,
+            format!(
+                "{parent} is coarser than 006415654636 by 1 resolution\n\
+                 {parent} and 006415654636 are not neighbours\n\
+                 {parent} is an immediate parent of 006415654636\n\
+                 {parent} is an ancestor of 006415654636\n\
+                 006415654636 is sub-zone {index} of {parent}, at depth 1\n"
+            )
+        );
+    }
+    let (_, out, _) = run(&["igeo7", "rel", "006415654636", "00641565462"], "");
+    assert!(
+        out.contains("006415654636 is an immediate child of 00641565462\n")
+            && out.contains("006415654636 is a descendant of 00641565462\n")
+            && out.contains("006415654636 is sub-zone 1 of 00641565462, at depth 1\n"),
+        "{out}"
+    );
+    let (_, out, _) = run(&["igeo7", "rel", "00641565463601", "00641565463602"], "");
+    assert!(
+        out.contains("00641565463601 and 00641565463602 are siblings\n"),
+        "{out}"
+    );
+    // On a broken seam an order may hold a zone to which the library gives no index: `index`
+    // says no more than that, and `rel` leaves the index unsaid.
+    let (zone, sub) = ("00000000000000000", "000000000000000001");
+    let (_, out, _) = run(&["igeo7", "sub", zone], "");
+    assert!(out.contains(&format!("      3  {sub}\n")), "{out}");
+    let (code, out, _) = run(&["igeo7", "index", zone, sub], "");
+    assert_eq!(
+        (code, out),
+        (
+            0,
+            format!("{sub} has no index among the sub-zones of {zone}\n")
+        )
+    );
+    let (_, out, _) = run(&["igeo7", "rel", zone, sub], "");
+    assert!(
+        out.contains(&format!("{zone} is an immediate parent of {sub}\n"))
+            && !out.contains("sub-zone"),
+        "{out}"
+    );
+    // Where the order is longer than the library lists, the index is left unsaid as well.
+    let (code, out, err) = run(&["igeo7", "rel", "00", "0000000000000"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("00 is an ancestor of 0000000000000\n") && !out.contains("sub-zone"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -783,7 +1004,7 @@ fn no_line_of_the_tool_exceeds_a_hundred_columns() {
             checked += 1;
         }
     }
-    assert!(checked >= 9, "only {checked} source files found in {dir}");
+    assert!(checked >= 8, "only {checked} source files found in {dir}");
 }
 
 #[test]
@@ -799,4 +1020,77 @@ fn help_for_a_grid_is_never_refused() {
     }
     // Not a request for help: still refused.
     assert_eq!(run(&["igeo7", "info", "-precision", "3"], "").0, 2);
+}
+
+/// The tool as a process of its own, with the limit on a list of sub-zones lowered to 20 by
+/// its environment: the variable is read once in a process, so that it cannot be set for one
+/// test of a process that runs many.
+fn run_with_a_limit_of_20(args: &[&str]) -> (Option<i32>, String, String) {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rs4dggs"))
+        .args(args)
+        .env("RS4DGGS_MAX_MATERIALISED_SUB_ZONES", "20")
+        .output()
+        .unwrap();
+    (
+        output.status.code(),
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+#[test]
+fn the_environment_lowers_the_limit_on_a_list_of_sub_zones() {
+    // On an aperture-7 grid: 13 sub-zones are within the limit, and 55 are refused with the
+    // limit in force; so is the index of a zone in an order of 55, while one in an order of
+    // 13 is answered, and so is one sub-zone by its index at any depth.
+    let (code, out, _) = run_with_a_limit_of_20(&["igeo7", "sub", "0064156"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("13 sub-zones at depth 1"), "{out}");
+    let (code, _, err) = run_with_a_limit_of_20(&["igeo7", "sub", "0064156", "-depth", "2"]);
+    assert_eq!(code, Some(1));
+    assert!(
+        err.contains("55 sub-zones are more than the limit of 20"),
+        "{err}"
+    );
+    let (code, out, _) = run_with_a_limit_of_20(&["igeo7", "index", "0064156", "00641565"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("is sub-zone 5 of 0064156"), "{out}");
+    let (code, _, err) = run_with_a_limit_of_20(&["igeo7", "index", "0064156", "006415600"]);
+    assert_eq!(code, Some(1));
+    assert!(
+        err.contains("55 sub-zones are more than the limit of 20"),
+        "{err}"
+    );
+    let (code, out, _) = run_with_a_limit_of_20(&["igeo7", "sub", "0064156", "27", "-depth", "2"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("006415600"), "{out}");
+    // An order longer than the ceiling itself is refused with the limit in force too, for
+    // the list and for an index.
+    for args in [
+        &["igeo7", "sub", "0064156", "-depth", "8"][..],
+        &["igeo7", "index", "0064156", "006415600000000"],
+    ] {
+        let (code, _, err) = run_with_a_limit_of_20(args);
+        assert_eq!(code, Some(1), "{args:?}");
+        assert!(
+            err.contains("5767201 sub-zones are more than the limit of 20"),
+            "{args:?}: {err}"
+        );
+    }
+    // On an aperture-3 grid: 6 are within it, and 31 are refused.
+    let (code, out, _) = run_with_a_limit_of_20(&["isea3h", "sub", "A4-0-A"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("6 sub-zones at depth 1"), "{out}");
+    let (code, _, err) = run_with_a_limit_of_20(&["isea3h", "sub", "A4-0-A", "-depth", "3"]);
+    assert_eq!(code, Some(1));
+    assert!(
+        err.contains("31 sub-zones are more than the limit of 20"),
+        "{err}"
+    );
+    let (code, _, err) = run_with_a_limit_of_20(&["isea3h", "index", "A4-0-A", "B2-5-C"]);
+    assert_eq!(code, Some(1));
+    assert!(
+        err.contains("31 sub-zones are more than the limit of 20"),
+        "{err}"
+    );
 }

@@ -25,6 +25,7 @@ doc = false
 
 [dependencies]
 rs4dggs = { path = "../rs4dggs", version = "0.1.0" }
+rs4dggs-ogc = { path = "../rs4dggs-ogc", version = "0.1.0" }
 
 [features]
 # Compiles the tests that compare the tool with DGGAL's own `dgg`; nothing else.

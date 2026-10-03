@@ -282,8 +282,8 @@ pub fn engine_can_read(grid: &str, zone: u64) -> bool {
     zone_from_text(grid, &text_id(grid, zone)) == zone && level(grid, zone) <= 33
 }
 
-/// The zone's refined boundary in DGGAL's planar 5x6 CRS, `CRS { ogc, 153456 }`, at
-/// `edgeRefinement` one.
+/// The zone's refined boundary in DGGAL's planar 5x6 CRS, `CRS { ogc, 153456 }`, at the given
+/// `edgeRefinement`; the callers that mean the engine's own containment test pass one.
 ///
 /// This is the one accessor that reaches the routine the eC's own containment test is
 /// given. `containsPoint` calls `getBaseRefinedVerticesNoAlloc(false, 1, ...)`
@@ -297,13 +297,116 @@ pub fn engine_can_read(grid: &str, zone: u64) -> bool {
 ///
 /// Coordinates come back exactly as DGGAL computed them, in 5x6 units, with no rounding
 /// or conversion on this side.
-pub fn refined_crs_vertices_5x6(grid: &str, zone: u64) -> Vec<(f64, f64)> {
+pub fn refined_crs_vertices_5x6(grid: &str, zone: u64, refinement: i32) -> Vec<(f64, f64)> {
     with(grid, move |g| {
-        g.getZoneRefinedCRSVertices(zone, crs_5x6(), 1)
+        g.getZoneRefinedCRSVertices(zone, crs_5x6(), refinement)
             .iter()
             .map(|p| (p.x, p.y))
             .collect()
     })
+}
+/// The zone's refined boundary in WGS84, `getZoneRefinedWGS84Vertices`, as `(lat, lon)` in
+/// radians, exactly as the engine gives them: longitudes continuous beyond `+-Pi` over the
+/// antimeridian, never closed, and the ring's own direction and starting vertex.
+///
+/// **The trap, enforced here.** On the aperture-3 grids the engine answers a null array, not an
+/// empty one, for an identifier it cannot read (the unreadable polar class, a polar root with a
+/// non-zero index), and the vendored binding builds its slice from that null pointer (`slice::from_raw_parts(null, 0)`),
+/// a crash no Rust mechanism can catch. This function therefore calls `engine_can_read` first
+/// and **panics**, with a message naming the grid and the zone, where it fails on an aperture-3
+/// grid. The guard is deliberately broader than the null-array class: `engine_can_read` also
+/// refuses the null zone and the identifiers of level 34 and above, for which the engine gives a
+/// non-null empty ring, so that they too are refused here. A caller that may hold such an
+/// identifier asks `engine_can_read` itself, before this.
+/// On the aperture-7 grids the array is never null: the null zone and a Z7 identifier of twenty
+/// digits give an empty ring, and an identifier the engine writes but cannot read back
+/// (`01222222222222222220`) an ordinary one, so no guard applies and none is made.
+///
+/// `refinement` is the engine's own `edgeRefinement`: 0 is automatic, a positive `n` divides each
+/// edge into `n` parts. Beyond some 107 million the engine's own product by 20 wraps; that is
+/// not asked here. **A negative one is refused with a panic**: through the vendored binding
+/// it gives an empty ring in a release build and aborts a debug build, a failure that cannot be
+/// caught.
+pub fn refined_vertices(grid: &str, zone: u64, refinement: i32) -> Vec<(f64, f64)> {
+    assert!(
+        refinement >= 0,
+        "dggal-oracle: a negative edge refinement ({refinement}) crashes the vendored binding"
+    );
+    if refinement_ratio(grid) == 3 && !engine_can_read(grid, zone) {
+        panic!(
+            "dggal-oracle: {grid} cannot read zone {zone:#x} (its text is {:?}); the engine answers \
+             a null ring for some such zones on aperture 3, which the vendored binding \
+             would dereference, and this guard refuses them all. Ask `engine_can_read` before `refined_vertices`.",
+            text_id(grid, zone)
+        );
+    }
+    with(grid, move |g| {
+        g.getZoneRefinedWGS84Vertices(zone, refinement)
+            .iter()
+            .map(|p| (p.lat, p.lon))
+            .collect()
+    })
+}
+/// The zone's WGS84 extent, `getZoneWGS84Extent`, as `[ll.lat, ll.lon, ur.lat, ur.lon]` in
+/// radians, as the engine gives it. `ll.lon > ur.lon` marks a zone over the antimeridian. A zone
+/// without geometry (the null zone, a Z7 identifier of twenty digits, an aperture-3 identifier
+/// the engine cannot read) gives the cleared extent: `ll = (X, X)`, `ur = (-X, -X)` with
+/// `X = 0x7f91df46a2529d38`. Unlike the ring, the extent has no trap: it is safe to ask for
+/// any identifier.
+pub fn extent(grid: &str, zone: u64) -> [f64; 4] {
+    with(grid, move |g| {
+        let e = g.getZoneWGS84Extent(zone);
+        [e.ll.lat, e.ll.lon, e.ur.lat, e.ur.lon]
+    })
+}
+/// The zone's area in square metres, `getZoneArea`: the level's formula for any identifier (no
+/// trap), `+inf` for the null zone.
+pub fn area(grid: &str, zone: u64) -> f64 {
+    with(grid, move |g| g.getZoneArea(zone))
+}
+/// `countZones`: the number of zones at `level`, the engine's own count at any `int`.
+pub fn count_zones(grid: &str, level: i32) -> u64 {
+    with(grid, move |g| g.countZones(level))
+}
+/// `getRefZoneArea`: the reference area of a zone at `level`, in square metres.
+pub fn ref_zone_area(grid: &str, level: i32) -> f64 {
+    with(grid, move |g| g.getRefZoneArea(level))
+}
+/// `getLevelFromRefZoneArea`: the level whose reference area the given area reaches.
+pub fn level_from_ref_zone_area(grid: &str, m2: f64) -> i32 {
+    with(grid, move |g| g.getLevelFromRefZoneArea(m2))
+}
+/// `getMetersPerSubZoneFromLevel`: the size in metres of a sub-zone `depth` levels below `level`.
+pub fn meters_per_sub_zone(grid: &str, level: i32, depth: i32) -> f64 {
+    with(grid, move |g| g.getMetersPerSubZoneFromLevel(level, depth))
+}
+/// `getLevelFromMetersPerSubZone`: the level whose sub-zones `depth` below it measure `m` metres.
+pub fn level_from_meters_per_sub_zone(grid: &str, m: f64, depth: i32) -> i32 {
+    with(grid, move |g| g.getLevelFromMetersPerSubZone(m, depth))
+}
+/// `getRefinementRatio`: 7 on the aperture-7 grids, 3 on the aperture-3 grids.
+pub fn refinement_ratio(grid: &str) -> i32 {
+    with(grid, |g| g.getRefinementRatio())
+}
+/// `getMaxParents`.
+pub fn max_parents(grid: &str) -> i32 {
+    with(grid, |g| g.getMaxParents())
+}
+/// `getMaxChildren`.
+pub fn max_children(grid: &str) -> i32 {
+    with(grid, |g| g.getMaxChildren())
+}
+/// `getMaxNeighbors`.
+pub fn max_neighbors(grid: &str) -> i32 {
+    with(grid, |g| g.getMaxNeighbors())
+}
+/// `get64KDepth`: the depth at which a zone has about 65,536 sub-zones.
+pub fn depth_64k(grid: &str) -> i32 {
+    with(grid, |g| g.get64KDepth())
+}
+/// `getMaxDepth`.
+pub fn max_depth(grid: &str) -> i32 {
+    with(grid, |g| g.getMaxDepth())
 }
 pub fn neighbors(grid: &str, zone: u64) -> Vec<u64> {
     with(grid, move |g| {
@@ -337,4 +440,102 @@ pub fn sub_zones(grid: &str, zone: u64, depth: i32) -> Vec<u64> {
 /// zones share a level, before it consults either (`RI7H.ec:229-230`).
 pub fn sub_zone_index(grid: &str, parent: u64, sub: u64) -> i64 {
     with(grid, move |g| g.getSubZoneIndex(parent, sub))
+}
+
+/// The engine's `listZones`: the zones of `level` whose extents meet `bbox`, in the engine's own
+/// order. `bbox` is `[ll.lat, ll.lon, ur.lat, ur.lon]` in radians, `ll.lon > ur.lon` marking a box
+/// over the antimeridian. `None` is the whole world: the binding cannot hand the engine a null
+/// box, so this function sends `(-Pi/2, -Pi, Pi/2, Pi)` to the bit, the very box the engine
+/// itself puts in the place of a null one, and for which it takes its short way.
+///
+/// **Panics**, naming the box, on an input for which the engine answers a null array, which the
+/// vendored binding would dereference, or does not answer at all: a coordinate that is not finite;
+/// a latitude beyond a pole or a box whose south lies above its north; a longitude beyond `Pi` in
+/// magnitude (over the antimeridian the engine recurses without end); a side of the box under
+/// 1e-11 radian that is not nought (the engine's walk makes no progress); a box of one point on
+/// a pole; on aperture 7, a box of no height on a pole or of no width on the antimeridian (on
+/// it, or within the 2e-15 radian by which the engine demands that an extent overlap the box),
+/// which no extent can meet; a level below 0 or beyond the grid's finest. What the engine would
+/// answer only at a cost beyond the gate's means is not refused here: asking for it is the
+/// caller's affair.
+///
+/// **A trap that no check here can close.** On aperture 7 an empty answer, at any level, is a
+/// null array and not an empty one, and the vendored binding dereferences it: the process
+/// aborts, in a debug build, beyond any catching. The boxes that are empty by rule are refused
+/// above; a box of positive area in which the engine finds no zone is not, and none is known at
+/// levels up to 14, while at levels 18 and 19 even a box of six zone widths upon an edge of the
+/// icosahedron is so answered. Ask there only a box known to hold a zone; a suite that draws
+/// boxes keeps to level 14 on aperture 7. On aperture 3 an empty answer is an empty array.
+pub fn list_zones(grid: &str, level: i32, bbox: Option<[f64; 4]>) -> Vec<u64> {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let b = match bbox {
+        None => [-FRAC_PI_2, -PI, FRAC_PI_2, PI],
+        Some(b) => b,
+    };
+    let bits = format!(
+        "[{:#018x}, {:#018x}, {:#018x}, {:#018x}]",
+        b[0].to_bits(),
+        b[1].to_bits(),
+        b[2].to_bits(),
+        b[3].to_bits()
+    );
+    let [s, w, n, e] = b;
+    assert!(
+        b.iter().all(|x| x.is_finite()),
+        "dggal-oracle: listZones on {grid}, a coordinate that is not finite: {b:?} (bits {bits})"
+    );
+    assert!(
+        -FRAC_PI_2 <= s && s <= n && n <= FRAC_PI_2,
+        "dggal-oracle: listZones on {grid}, a latitude inverted or beyond a pole: {b:?} (bits {bits})"
+    );
+    assert!(
+        w.abs() <= PI && e.abs() <= PI,
+        "dggal-oracle: listZones on {grid}, a longitude beyond Pi, which sends the engine into endless recursion over the antimeridian: {b:?} (bits {bits})"
+    );
+    let dlat = n - s;
+    let dlon = if e < w { e - w + 2.0 * PI } else { e - w };
+    assert!(
+        !((dlat != 0.0 && dlat < 1e-11) || (dlon != 0.0 && dlon < 1e-11)),
+        "dggal-oracle: listZones on {grid}, a sliver (a side under 1e-11 radian and not nought), on which the engine's walk makes no progress: {b:?} (bits {bits})"
+    );
+    assert!(
+        !(dlat == 0.0 && dlon == 0.0 && s.abs() == FRAC_PI_2),
+        "dggal-oracle: listZones on {grid}, a box of one point on a pole, for which the engine answers a null array: {b:?} (bits {bits})"
+    );
+    // The negations of the engine's own strict comparisons, between finite values: the box's
+    // south against the north pole, its north against the south pole, its west against +Pi and
+    // its east against -Pi, each less the margin. Over the antimeridian the engine cuts the box
+    // in two, and it is empty when both pieces are.
+    let (west_out, east_out) = (PI - 2e-15 <= w, e - 2e-15 <= -PI);
+    let lon_out = if w > e {
+        west_out && east_out
+    } else {
+        west_out || east_out
+    };
+    assert!(
+        !([IGEO7, IVEA7H, RTEA7H].contains(&grid)
+            && (FRAC_PI_2 - 2e-15 <= s || n - 2e-15 <= -FRAC_PI_2 || lon_out)),
+        "dggal-oracle: listZones on {grid}, a box of no height on a pole or of no width on the antimeridian, which no extent can meet and for which the engine answers a null array on aperture 7: {b:?} (bits {bits})"
+    );
+    assert!(
+        (0..=max_level(grid)).contains(&level),
+        "dggal-oracle: listZones on {grid}, level {level} outside the grid's 0 to {}: {b:?} (bits {bits})",
+        max_level(grid)
+    );
+    let ext = dggal_sys::GeoExtent {
+        ll: dggal_sys::GeoPoint { lat: s, lon: w },
+        ur: dggal_sys::GeoPoint { lat: n, lon: e },
+    };
+    with(grid, move |g| g.listZones(level, &ext))
+}
+
+/// The engine's `compactZones`: the zones of the slice with every parent whose sub-zones are all
+/// present standing for them, in the engine's order (the value of its identifier). A slice of
+/// mixed levels loses the coarser zones that a finer one covers.
+pub fn compact_zones(grid: &str, zones: &[u64]) -> Vec<u64> {
+    let mut v = zones.to_vec();
+    with(grid, move |g| {
+        g.compactZones(&mut v);
+        v
+    })
 }

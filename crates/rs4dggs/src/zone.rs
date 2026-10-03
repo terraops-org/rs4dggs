@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 use crate::disk::Disk;
 use crate::grid::Grid;
-use crate::{GeoPoint, Indexing, Projection, Result, Topology, ZoneId};
+use crate::{Extent, GeoPoint, Indexing, Projection, Result, Topology, ZoneId};
 
 /// One cell of one grid.
 ///
@@ -109,6 +109,28 @@ impl<'g, P: Projection, T: Topology, I: Indexing> Zone<'g, Grid<P, T, I>> {
         self.grid.vertices(self.id)
     }
 
+    /// The zone's area in square metres, as DGGAL computes it, or `None` for a zone without
+    /// geometry; see [`Grid::area`].
+    pub fn area(&self) -> Option<f64> {
+        self.grid.area(self.id)
+    }
+
+    /// The zone's boundary in WGS84 degrees with every edge divided into `edge_refinement`
+    /// parts, 0 for the engine's own choice, or the empty ring for a zone without geometry;
+    /// see [`Grid::refined_vertices`] for the sequence, the longitudes, which are continuous
+    /// beyond 180 degrees, and the refinement that is refused: one above
+    /// [`crate::grid::max_edge_refinement`], which `RS4DGGS_MAX_EDGE_REFINEMENT` may lower from
+    /// 100,000 and which never refuses 0.
+    pub fn refined_vertices(&self, edge_refinement: u32) -> Result<Vec<GeoPoint>> {
+        self.grid.refined_vertices(self.id, edge_refinement)
+    }
+
+    /// The zone's geographic extent in WGS84 degrees, or `None` for a zone without geometry;
+    /// see [`Grid::extent`], and [`Extent`] for an extent over the antimeridian.
+    pub fn extent(&self) -> Option<Extent> {
+        self.grid.extent(self.id)
+    }
+
     /// The zone's edge neighbours; see [`Grid::neighbors`], which also says where the
     /// relation is not symmetric.
     ///
@@ -128,15 +150,19 @@ impl<'g, P: Projection, T: Topology, I: Indexing> Zone<'g, Grid<P, T, I>> {
         self.wrap(self.grid.neighbors(self.id))
     }
 
-    /// The primary parent, that is the first of `parents`, or `None` at the
-    /// root. On a congruent grid this is the single parent; on an aperture-3
-    /// grid it is DGGAL's own `parent0`.
+    /// The primary parent, that is the first of `parents`, or `None` where the zone
+    /// has none, as at resolution 0. It is DGGAL's own `parent0` on every grid. On an
+    /// aperture-7 grid it is the zone the identifier names with its last digit
+    /// dropped, save at some identifiers of the broken seams, from resolution 16 as
+    /// measured, where the engine names another zone or none. Those are identifiers that a text can name
+    /// and that no position was seen to quantise to: not one of them is the zone found at
+    /// its own centroid (see [`Grid::parents`]).
     ///
     /// # Examples
     ///
     /// ```
     /// let zone = rs4dggs::igeo7().zone_from_text("0064156")?;
-    /// let parent = zone.parent().expect("a zone above resolution 0 has a parent");
+    /// let parent = zone.parent().expect("this zone has a parent");
     /// assert_eq!(parent.text_id(), "006415");
     /// assert!(parent.is_ancestor_of(&zone));
     ///
@@ -151,13 +177,16 @@ impl<'g, P: Projection, T: Topology, I: Indexing> Zone<'g, Grid<P, T, I>> {
             .map(|&p| self.grid.zone(p))
     }
 
-    /// Every parent: one on a congruent grid, one or three on a non-congruent
-    /// aperture-3 one.
+    /// Every parent, the primary one first: one or two on an aperture-7 grid, one or
+    /// three on an aperture-3 grid, none at resolution 0, and none either at some
+    /// identifiers of the broken seams of an aperture-7 grid; see [`Grid::parents`].
     pub fn parents(&self) -> Vec<Self> {
         self.wrap(self.grid.parents(self.id))
     }
 
-    /// The zone's children, empty at the maximum resolution.
+    /// The zone's children, in DGGAL's order, empty at the maximum resolution: thirteen
+    /// for a hexagon and eleven for a pentagon on an aperture-7 grid, seven and six on an
+    /// aperture-3 grid; see [`Grid::children`].
     ///
     /// # Examples
     ///
@@ -165,11 +194,11 @@ impl<'g, P: Projection, T: Topology, I: Indexing> Zone<'g, Grid<P, T, I>> {
     /// let grid = rs4dggs::igeo7();
     /// let zone = grid.zone_from_text("0064156")?;
     /// let children = zone.children();
-    /// assert_eq!(children.len(), 7);
+    /// assert_eq!(children.len(), 13);
     /// assert!(children.iter().all(|child| child.is_immediate_child_of(&zone)));
     ///
-    /// // A pentagon has six.
-    /// assert_eq!(grid.zone_from_text("00")?.children().len(), 6);
+    /// // A pentagon has eleven.
+    /// assert_eq!(grid.zone_from_text("00")?.children().len(), 11);
     /// # Ok::<(), rs4dggs::Error>(())
     /// ```
     pub fn children(&self) -> Vec<Self> {
@@ -177,17 +206,16 @@ impl<'g, P: Projection, T: Topology, I: Indexing> Zone<'g, Grid<P, T, I>> {
     }
 
     /// The zone's centroid parent as DGGAL defines it: the first of its parents
-    /// that is itself a centroid child, or `None` where none is; the single
-    /// parent on a congruent grid. On an aperture-3 grid this is not the parent
-    /// of which the zone is the centroid child; see [`Grid::centroid_parent`].
+    /// that is itself a centroid child, or `None` where none is. This is not the
+    /// parent of which the zone is the centroid child; see [`Grid::centroid_parent`].
     pub fn centroid_parent(&self) -> Option<Self> {
         self.grid
             .centroid_parent(self.id)
             .map(|p| self.grid.zone(p))
     }
 
-    /// Whether the zone is its parent's centroid child, which every zone of a
-    /// congruent grid is.
+    /// Whether the zone is a centroid child, the child that shares the centre of its
+    /// primary parent; see [`Grid::is_centroid_child`].
     pub fn is_centroid_child(&self) -> bool {
         self.grid.is_centroid_child(self.id)
     }
@@ -197,7 +225,10 @@ impl<'g, P: Projection, T: Topology, I: Indexing> Zone<'g, Grid<P, T, I>> {
         self.parents().contains(other)
     }
 
-    /// Every sub-zone `depth` levels below this one, in the grid's own order.
+    /// Every sub-zone `depth` levels below this one, in the grid's own order; see
+    /// [`Grid::sub_zones`] for what the order is on each aperture, and for the entry
+    /// that is the null zone, which an order in the broken seams of an aperture-7 grid
+    /// may hold.
     pub fn sub_zones(&self, depth: u8) -> Result<Vec<Self>> {
         Ok(self.wrap(self.grid.sub_zones(self.id, depth)?))
     }
@@ -213,8 +244,8 @@ impl<'g, P: Projection, T: Topology, I: Indexing> Zone<'g, Grid<P, T, I>> {
     }
 
     /// Where `sub` sits in this zone's sub-zone order, or `None` if it is no
-    /// sub-zone of it; see [`Grid::sub_zone_index`] for the ways in which the
-    /// answer departs from the engine's.
+    /// sub-zone of it, or one that has no index; see [`Grid::sub_zone_index`]
+    /// for the ways in which the answer departs from the engine's.
     ///
     /// The grid check is not redundant: two instances of the same grid type
     /// share one packing, so comparing identifiers alone cannot tell a genuine
@@ -238,10 +269,10 @@ impl<'g, P: Projection, T: Topology, I: Indexing> Zone<'g, Grid<P, T, I>> {
     /// Whether this zone is an ancestor of `other`.
     ///
     /// The walk goes up the parent graph rather than down the children,
-    /// because a non-congruent hierarchy is a directed acyclic graph and not a
-    /// tree: a zone may have three parents, whose own ancestors overlap, so
-    /// the frontier is kept as a set and every zone already visited is
-    /// dropped.
+    /// because the hierarchy is a directed acyclic graph and not a tree: a
+    /// zone may have two parents on an aperture-7 grid and three on an
+    /// aperture-3 grid, whose own ancestors overlap, so the frontier is kept
+    /// as a set and every zone already visited is dropped.
     ///
     /// A zone of another grid instance is never a descendant, for the reason
     /// given at [`Zone::sub_zone_index`], which the same check guards.
@@ -368,13 +399,27 @@ mod tests {
         assert_eq!(distinct.len(), 12);
     }
 
+    /// Siblings share a parent, either of the two a zone of an aperture-7 grid may have, as
+    /// the engine's `areZonesSiblings` answers for each pair below: `0064156`, whose parents
+    /// are `006415` and `006414`, is a sibling of `0064154`, which shares the first, of
+    /// `0064144`, which shares the second, and of `0064141`, which has both; not of
+    /// `0064100`, whose one parent is `006410`, nor of a zone of another resolution.
     #[test]
     fn siblings_share_a_parent() {
         let g = igeo7();
-        let a = g.zone_from_text("0064156").unwrap();
-        let b = g.zone_from_text("0064154").unwrap();
-        assert!(a.is_sibling_of(&b));
-        assert!(!a.is_sibling_of(&g.zone_from_text("0064141").unwrap()));
+        let zone = |text: &str| g.zone_from_text(text).unwrap();
+        let a = zone("0064156");
+        for (text, is) in [
+            ("0064154", true),
+            ("0064141", true),
+            ("0064144", true),
+            ("0064100", false),
+            ("00641560", false),
+        ] {
+            let b = zone(text);
+            assert_eq!(a.is_sibling_of(&b), is, "{text}");
+            assert_eq!(b.is_sibling_of(&a), is, "{text}");
+        }
         assert!(!a.is_sibling_of(&a.parent().unwrap()));
     }
 

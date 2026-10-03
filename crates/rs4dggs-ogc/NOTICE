@@ -1,0 +1,115 @@
+NOTICE
+
+rs4dggs-ogc writes the encodings of OGC API - Discrete Global Grid Systems, Part 1: Core (OGC
+21-038r1) over the rs4dggs library. It carries four files of the Open Geospatial Consortium
+(OGC) unmodified, and four files derived from OGC files with modifications.
+
+----------------------------------------------------------------------
+
+Material of the Open Geospatial Consortium
+
+The copyright in the following files is held by the Open Geospatial Consortium. They are copied
+without modification from the OGC's schema repository, https://schemas.opengis.net/ogcapi/dggs/1.0/
+(the directory posted on 2025-09-23 from OGC 21-038r1), at the paths given beside them. The two
+definitions are also, byte for byte, the files registry/dggrs/OGC/1.0/ISEA3H.json and IVEA3H.json
+of the repository of the standard,
+https://github.com/opengeospatial/ogcapi-discrete-global-grid-systems.
+
+  definitions/ISEA3H.json                core/schemas/dggrs-definition/examples/ISEA3H.json
+  definitions/IVEA3H.json                core/schemas/dggrs-definition/examples/IVEA3H.json
+  tests/fixtures/ogc/dggs-json.json      core/schemas/dggs-json/dggs-json.json
+  tests/fixtures/ogc/1-temperature.json  core/examples/1-temperature.json
+
+The following files were written for this crate from the registered definitions named beside
+them (under the same directory, core/schemas/dggrs-definition/examples/), whose copyright the
+Open Geospatial Consortium holds, and from DGGAL:
+
+  definitions/RTEA3H.json                IVEA3H.json
+  definitions/ISEA7H_Z7.json             ISEA7H.json
+  definitions/IVEA7H_Z7.json             IVEA7H.json
+  definitions/RTEA7H_Z7.json             IVEA7H.json
+
+These four files include modifications that have not been approved or adopted by the Open
+Geospatial Consortium. Each says so in its own description. The grids they define are not
+registered with the OGC.
+
+Neither the Open Geospatial Consortium nor any holder of a copyright in its material endorses or
+promotes rs4dggs-ogc; its name appears here only to credit the material the crate carries.
+
+All eight files are used under the licence of the Open Geospatial Consortium, reproduced below in
+full as it appears in the file LICENSE of the repository of the standard.
+
+----------------------------------------------------------------------
+
+Permission is hereby granted by the Open Geospatial Consortium, ("Licensor"), free of charge and subject to the terms set forth below, to any person obtaining a copy of this Intellectual Property and any associated documentation, to deal in the Intellectual Property without restriction (except as set forth below), including without limitation the rights to implement, use, copy, modify, merge, publish, distribute, and/or sublicense copies of the Intellectual Property, and to permit persons to whom the Intellectual Property is furnished to do so, provided that all copyright notices on the intellectual property are retained intact and that each person to whom the Intellectual Property is furnished agrees to the terms of this Agreement.
+
+If you modify the Intellectual Property, all copies of the modified Intellectual Property must include, in addition to the above copyright notice, a notice that the Intellectual Property includes modifications that have not been approved or adopted by LICENSOR.
+
+THIS LICENSE IS A COPYRIGHT LICENSE ONLY, AND DOES NOT CONVEY ANY RIGHTS UNDER ANY PATENTS THAT MAY BE IN FORCE ANYWHERE IN THE WORLD.
+
+THE INTELLECTUAL PROPERTY IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT OF THIRD PARTY RIGHTS. THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE DO NOT WARRANT THAT THE FUNCTIONS CONTAINED IN THE INTELLECTUAL PROPERTY WILL MEET YOUR REQUIREMENTS OR THAT THE OPERATION OF THE INTELLECTUAL PROPERTY WILL BE UNINTERRUPTED OR ERROR FREE. ANY USE OF THE INTELLECTUAL PROPERTY SHALL BE MADE ENTIRELY AT THE USER’S OWN RISK. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR ANY CONTRIBUTOR OF INTELLECTUAL PROPERTY RIGHTS TO THE INTELLECTUAL PROPERTY BE LIABLE FOR ANY CLAIM, OR ANY DIRECT, SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM ANY ALLEGED INFRINGEMENT OR ANY LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR UNDER ANY OTHER LEGAL THEORY, ARISING OUT OF OR IN CONNECTION WITH THE IMPLEMENTATION, USE, COMMERCIALIZATION OR PERFORMANCE OF THIS INTELLECTUAL PROPERTY.
+
+This license is effective until terminated. You may terminate it at any time by destroying the Intellectual Property together with all copies in any form. The license will also terminate if you fail to comply with any term or condition of this Agreement. Except as provided in the following sentence, no such termination of this license shall require the termination of any third party end-user sublicense to the Intellectual Property which is in force as of the date of notice of such termination. In addition, should the Intellectual Property, or the operation of the Intellectual Property, infringe, or in LICENSOR’s sole opinion be likely to infringe, any patent, copyright, trademark or other right of a third party, you agree that LICENSOR, in its sole discretion, may terminate this license without any compensation or liability to you, your licensees or any other party. You agree upon termination of any kind to destroy or cause to be destroyed the Intellectual Property together with all copies in any form, whether held by you or by any third party.
+
+Except as contained in this notice, the name of LICENSOR or of any other holder of a copyright in all or part of the Intellectual Property shall not be used in advertising or otherwise to promote the sale, use or other dealings in this Intellectual Property without prior written authorization of LICENSOR or such copyright holder. LICENSOR is and shall at all times be the sole entity that may authorize you or any third party to use certification marks, trademarks or other special designations to indicate compliance with any LICENSOR standards or specifications. This Agreement is governed by the laws of the Commonwealth of Massachusetts. The application to this Agreement of the United Nations Convention on Contracts for the International Sale of Goods is hereby expressly excluded. In the event any provision of this Agreement shall be deemed unenforceable, void or invalid, such provision shall be modified so as to make it valid and enforceable, and as so modified the entire Agreement shall remain in full force and effect. No decision, action or inaction by LICENSOR shall be construed to be a waiver of any rights or remedies available to it.
+
+----------------------------------------------------------------------
+
+DGGAL
+
+rs4dggs-ogc depends on the rs4dggs library, which is a Rust port of the algorithms of DGGAL,
+the Discrete Global Grid Abstraction Library, whose copyright holder is Ecere Corporation. The
+notice below, which the library carries, applies to this crate through it.
+
+rs4dggs is a Rust port of the algorithms of DGGAL.
+
+The port reproduces DGGAL's numeric constants verbatim. At the sites its own source and
+documentation cite, it also reproduces the operation order that DGGAL v0.0.6, as built by
+its own compiler settings, performs where that order departs from the order its eC source
+text spells.
+
+It is a modified work: in a few places it departs from DGGAL's answers on purpose (among
+them the aperture-3 sub-zone orders corrected at some rhombus-edge zones, four kinds of
+entry left out of the aperture-7 neighbour lists, and every zone's vertices given
+anticlockwise), each described under "Departures from the engine" in its README.
+
+rs4dggs and rs4dggs-ogc contain no DGGAL source code and no DGGAL binary. DGGAL serves only
+as the oracle of their test suites, which run a separately installed copy; it is not
+distributed with these crates.
+
+Neither Ecere Corporation nor DGGAL's contributors endorse or promote rs4dggs or
+rs4dggs-ogc; their names appear here only to credit the work it ports.
+
+DGGAL is distributed under the BSD 3-Clause Licence, reproduced below in full as it appears
+in its own distribution.
+
+----------------------------------------------------------------------
+
+BSD 3-Clause License
+
+Copyright (c) 2014-2025, Ecere Corporation
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

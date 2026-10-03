@@ -2,9 +2,10 @@
 
 `rs4dggs` is a command-line tool over the `rs4dggs` library, a pure-Rust port of the discrete
 global grid systems of DGGAL (IGEO7, IVEA7H, RTEA7H, ISEA3H, IVEA3H and RTEA3H). It finds the zone
-that contains a point, prints a zone's card, boundary, neighbours and disk, relates two zones, and
-does the same for many points or zones read from standard input, as text, CSV or GeoJSON. It has
-no dependency other than the library.
+that contains a point, prints a zone's card, boundary, neighbours and disk, relates two zones,
+lists a zone's sub-zones in order, and answers for many points or zones read from standard input,
+as text, CSV or GeoJSON. Its dependencies are the library and its companion crate of encodings,
+`rs4dggs-ogc`.
 
 Its invocation follows DGGAL's own tool, `dgg`, and for every command that both have, the
 identifiers and coordinates it prints are those `dgg` prints, save where the library departs from
@@ -95,8 +96,8 @@ $ rs4dggs igeo7 zone 38.72,-9.14 10
 IGEO7 zone 006415654636  (integer 940643638281502719, hex 0D0DD667BFFFFFFF)
   resolution  10, hexagon
   centroid    38.71963792895191, -9.140391954153882   (lat, lon)
-  parents     1: 00641565463
-  children    7: 0064156546360 (centre), 0064156546361, 0064156546362, 0064156546363, 0064156546364, 0064156546365, 0064156546366
+  parents     2: 00641565463, 00641565462
+  children    13: 0064156546360 (centre), 0064156546361, 0064156546365, 0064156546364, 0064156546366, 0064156546362, 0064156546363, 0064156546342, 0064156546033, 0064156546251, 0064156546215, 0064156546324, 0064156546306
   neighbours  6: 006415654634, 006415654603, 006415654625, 006415654621, 006415654632, 006415654630
   vertices    6:
               38.72191423979572, -9.141012890880889
@@ -127,9 +128,10 @@ the CSV is empty, and GeoJSON writes no feature for it.
 
 ### `info <zone>`: the zone's card
 
-The card is the one shown above, and `rs4dggs igeo7 info 006415654636` prints it. On the aperture-3
-grids the parents are those of the aperture-3 hierarchy, the centroid parent marked as `dgg` marks
-it:
+The card is the one shown above, and `rs4dggs igeo7 info 006415654636` prints it. The parents and
+the children are DGGAL's own on every grid, in its order. On the aperture-3 grids a zone has one
+parent or three, and seven children, or six under a pentagon. The parent that is itself a centroid
+child is marked, as `dgg` marks it, and so is the child at the zone's centre:
 
 ```
 $ rs4dggs isea3h info C2-23-C
@@ -148,8 +150,21 @@ ISEA3H zone C2-23-C  (integer 306244774661193870, hex 044000000000008E)
               39.97279511302393, -8.120762410070837
 ```
 
-On aperture 7, no parent is marked (every zone is the centre child of its one parent), and the
-centre child is.
+On the aperture-7 grids a zone has one parent or two, and thirteen children, or eleven under a
+pentagon: first those whose identifiers continue the zone's own (seven, or six under a pentagon),
+then those that lie under a neighbouring zone as well. The marks are the same:
+
+```
+$ rs4dggs igeo7 info 00641565463601 | head -5
+IGEO7 zone 00641565463601  (integer 940643637241315327, hex 0D0DD66781FFFFFF)
+  resolution  12, hexagon
+  centroid    38.72015364223723, -9.140141353964504   (lat, lon)
+  parents     2: 0064156546360 (centroid parent), 0064156546361
+  children    13: 006415654636010 (centre), 006415654636011, 006415654636015, 006415654636014, 006415654636016, 006415654636012, 006415654636013, 006415654636162, 006415654636053, 006415654636001, 006415654636035, 006415654636344, 006415654636126
+```
+
+Where no parent is a centroid child, as for `006415654636` above, none is marked. On every grid a
+zone of resolution 0 has no parent, and a zone of the finest resolution no children.
 
 ### `geom <zone>`: the boundary
 
@@ -198,16 +213,18 @@ $ rs4dggs igeo7 rel 00641565463 006415654634
 00641565463 and 006415654634 are not neighbours
 00641565463 is an immediate parent of 006415654634
 00641565463 is an ancestor of 006415654634
+006415654634 is sub-zone 9 of 00641565463, at depth 1
 ```
 
 The relations stated are: identical or not, which is coarser and by how many resolutions,
-neighbours or not, parent and child, ancestor and descendant, siblings, and, on the aperture-3
-grids, the depth and index of a sub-zone that lies within the other zone.
+neighbours or not, parent and child, ancestor and descendant, siblings, and the depth and index
+of a zone that is a sub-zone of the other. The index is left unsaid where the library gives
+none, and where the order is longer than the library lists (see `sub` below).
 
-### `sub` and `index` (aperture 3)
+### `sub` and `index`
 
-The sub-zones of a zone at a relative depth, in order, or the one at a given index; and the index
-of a sub-zone within its parent, at the depth their resolutions set:
+The sub-zones of a zone at a relative depth, in DGGAL's order, or the one at a given index; and
+the index of a sub-zone within a zone, at the depth their resolutions set:
 
 ```
 $ rs4dggs isea3h sub A4-0-A
@@ -224,8 +241,52 @@ $ rs4dggs isea3h index A4-0-A B2-5-C
 B2-5-C is sub-zone 8 of A4-0-A, at depth 3
 ```
 
-On the aperture-7 grids these commands answer with a sentence and exit code 1: the library
-implements the congruent Z7 hierarchy, over which no sub-zone order is defined yet.
+On the aperture-7 grids the order bears no relation to the digits of the identifiers: it runs
+across the zone line by line, as the engine's does:
+
+```
+$ rs4dggs igeo7 sub 00
+IGEO7 zone 00: 11 sub-zones at depth 1
+      0  013
+      1  023
+      2  005
+      3  001
+      4  053
+      5  004
+      6  000
+      7  003
+      8  033
+      9  006
+     10  043
+$ rs4dggs igeo7 sub 0064156 27 -depth 2
+sub-zone 27 of 0064156 at depth 2: 006415600
+$ rs4dggs igeo7 index 0064156 006415600
+006415600 is sub-zone 27 of 0064156, at depth 2
+```
+
+A position of an order may hold no zone. Along the two broken seams of the aperture-7 grids, at
+fine resolutions, DGGAL's own order has the null zone at some positions, and the library keeps
+every position as the engine has it. The tool prints `(no cell)` there, as `zone` does for a
+resolution at which a point lies in no cell:
+
+```
+$ rs4dggs igeo7 sub 010004000400 -depth 5 | sed -n '205,207p'
+    203  01000400040032330
+    204  (no cell)
+    205  01000400040032323
+```
+
+Of a zone that has no index in the order, `index` says so, with exit code 0:
+
+```
+$ rs4dggs isea3h index A4-0-A B6-5-C
+B6-5-C has no index among the sub-zones of A4-0-A
+```
+
+A list of more than 4,000,000 sub-zones is refused, with exit code 1, and so is the index of a
+sub-zone within an order so long; the environment variable `RS4DGGS_MAX_MATERIALISED_SUB_ZONES`
+lowers that limit, and never raises it. One sub-zone by its index is answered at any depth. Both
+commands write text alone.
 
 ## Formats
 
@@ -235,7 +296,7 @@ implements the congruent Z7 hierarchy, over which no sub-zone order is defined y
 |---|---|
 | `zone <point> <res>` | `lat,lon,zone` |
 | `zone <point>` | `lat,lon,resolution,zone`, one row per resolution |
-| `info <zone>` | `zone,resolution,shape,centroid_lat,centroid_lon,parent` (on aperture 3, the parents separated by spaces) |
+| `info <zone>` | `zone,resolution,shape,centroid_lat,centroid_lon,parent` (the parents separated by spaces) |
 | `neighbours <zone>` | `zone,neighbour`, one row per pair |
 | `disk <zone> <k>` | `zone,ring,member`, one row per member |
 
@@ -338,7 +399,7 @@ geometry.
 | Code | Meaning |
 |---|---|
 | 0 | success, including a pipe closed early by the reader, and help |
-| 1 | the input named something that is not so (a zone that does not exist, a point out of range, a resolution beyond the grid's finest, a sub-zone order on aperture 7), a file that cannot be written, or any bad line in batch |
+| 1 | the input named something that is not so (a zone that does not exist, a point out of range, a resolution beyond the grid's finest, a list of sub-zones longer than the limit), a file that cannot be written, or any bad line in batch |
 | 2 | a malformed invocation: an unknown command, grid or option, a missing argument |
 
 Every error message says what was wrong and, for a malformed invocation, gives a correct example.
@@ -348,16 +409,32 @@ Every error message says what was wrong and, for a malformed invocation, gives a
 For the commands both tools have, the identifiers and coordinates equal `dgg`'s as `dgg` prints
 them wherever the library agrees with the engine, checked on a sample of zones and points on all
 six grids. Where the library departs from the engine on purpose, the tool follows the library; the
-library's README lists every such departure under "Departures from the engine". Five of them
-concern a user of `dgg` directly:
+library's README lists every such departure under "Departures from the engine". These concern a
+user of `dgg` directly:
 
-- the hierarchy of the aperture-7 grids: the library implements the congruent Z7 hierarchy, so a
-  zone has one parent and seven children, where `dgg` gives DGGAL's geometric hierarchy (for
-  `006415654636`, two parents and thirteen children); on aperture 3 the tool and `dgg` agree,
-  including the centroid parent;
+- the centroid parent on the aperture-7 grids: `dgg` marks no parent there, since DGGAL answers
+  no centroid parent for any zone of those grids, and the tool marks the first parent that is
+  itself a centroid child, as both tools do on aperture 3;
+- the parents and children on the aperture-7 grids, which omit the null zone, repeated entries
+  and identifiers the engine cannot read back, all three found only along two broken seams at
+  fine resolutions; everywhere else the lists are `dgg`'s own, in its order;
 - the neighbours on the aperture-7 grids, which omit the null zone, the zone itself, repeated
-  entries and identifiers the engine cannot read back, all four found only along two broken seams
-  at fine resolutions;
+  entries and identifiers the engine cannot read back, all four found only along the same two
+  seams;
+- the sub-zone at an index on the aperture-7 grids. At a pentagon, at an odd depth,
+  `dgg <grid> sub <zone> <index>` answers at some indices a zone that is not the entry of its own
+  list: sub-zone 9 of `00` at depth 1 is `006` in its list, and `030` by index. At depth 0, where
+  the order is the zone alone, `dgg` by index answers another zone. At the southern polar
+  pentagon of an odd resolution (`110`, for instance) at depth 2, `dgg` asked for sub-zone 0 ends
+  with a segmentation fault. In all three cases the tool answers the entry of the list;
+- the index of a sub-zone on the aperture-7 grids, along the two seams: there the engine's index
+  may be a position at which its own list holds another zone (`dgg` gives 6 for
+  `000000000000000001` within `00000000000000000`, whose list holds it at position 3), and the
+  tool, as the library, states an index only where the order holds the sub-zone at it, and
+  otherwise says that the zone has none;
+- the index of a zone among its own sub-zones, at depth 0, on every grid:
+  `dgg <grid> index <zone> <zone>` says `sub-zone <zone> not found within parent <zone>`, with
+  exit code 1, and the tool answers index 0, since at depth 0 the order is the zone alone;
 - the sub-zone order on the aperture-3 grids at some zones on the edges of the rhombi, where the
   engine's own order names a zone twice, names one that is no descendant, or omits one, and the
   tool gives each descendant once;
@@ -376,7 +453,6 @@ What `dgg` has and this tool has not yet:
 - `togeo` and DGGS-JSON;
 - other output coordinate systems (`-crs`: the 5x6 plane, the icosahedron net);
 - neighbour directions (`dgg` prints `(direction n)` beside each neighbour);
-- a sub-zone order on the aperture-7 grids;
 - densified edges in GeoJSON: straight lines in latitude and longitude depart visibly from the
   true edges of cells at resolutions 0 to 2.
 

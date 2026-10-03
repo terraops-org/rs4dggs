@@ -28,7 +28,7 @@
 //! four for each aperture-3 grid, the class rules of the grid's aperture, the input this
 //! crate refuses where the engine answers it meaninglessly, in
 //! `refusals_depart_from_the_engine_as_recorded`, and the sub-zone index of two different
-//! zones at one level, in `sub_zone_methods_refuse_on_aperture_7`); or it lies inside one
+//! zones at one level, in `sub_zones_at_depth_1_as_the_engine_lists_them`); or it lies inside one
 //! of the grid's measured regions in `common::unresolved`, for each aperture-7 grid the
 //! broken seams, which are open questions rather than rulings, and whose cases are
 //! counted, printed and held under a ceiling. Anything else fails, with the seed.
@@ -44,16 +44,27 @@
 //! level, without going through `engine_may_be_asked`; the engine answers none there
 //! too.
 //!
-//! On aperture 7, DGGAL's `getZoneParents` and `getZoneChildren` are its geometric
-//! hierarchy, a different relation from the congruent Z7 digit path this crate
-//! implements, and its `countSubZones` and relatives answer an order that the aperture-7
-//! grids here refuse to define. None of them is used as an oracle there. The hierarchy is
-//! checked through text identifiers instead, which are the digit path itself: see
-//! `the_text_route_reads_digit_paths_as_the_hierarchy`. DGGAL offers `isZoneAncestorOf`
-//! and `areZonesSiblings` (`dggrs.ec:352`, `:360`), but they answer over its geometric
-//! hierarchy, not the congruent one this crate implements, so they cannot serve as the
-//! oracle for `is_ancestor_of` and `is_sibling_of`, which are checked by the same text-id
-//! route instead, in `ancestry_and_siblings_via_text_ids`.
+//! On aperture 7 the parents and the children are DGGAL's own, its geometric hierarchy, and
+//! are compared with its `getZoneParents` and `getZoneChildren` directly, as sequences: the
+//! engine's lists less the three kinds of entry this crate drops, every one of them
+//! re-checked against the engine as it is left out (see `engine_relatives`). With them go
+//! the centroid child, the centroid parent as the engine defines it, and the three
+//! predicates against the engine's own, on pairs drawn from the lists (see `Hierarchy`).
+//! Two samples are compared so: the zones that positions give, in
+//! `parents_and_children_as_the_engine_lists_them`, and identifiers of a broken seam that
+//! are built by text, in `the_hierarchy_at_seam_identifiers_built_by_text`. What the broken
+//! seams do to the hierarchy is no divergence, for this crate answers there as the engine
+//! does: it is counted by class and by level and held, exactly, to what is recorded of each
+//! grid, and every zone so counted must lie within the band about the seams. The anomalies
+//! of the parents, a zone with none and a first parent that the identifier does not name,
+//! are met at the identifiers built by text alone, and each of those is asserted not to be
+//! the zone found at its own centroid.
+//!
+//! The sub-zone order of the aperture-7 grids is DGGAL's own too, and is compared with its
+//! `getSubZones` entry by entry: at depth 1 on a part of this file's sample, in
+//! `sub_zones_at_depth_1_as_the_engine_lists_them`, with the refusals and the index of a
+//! sub-zone; and to depth 5, with the first sub-zone, the zone at every index and what the
+//! broken seams do to an order, in `common::sub_zone_order`.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -1475,305 +1486,1010 @@ fn poles_and_seams_sample<S: Subject>() -> PolesAndSeams {
     }
 }
 
-/// The route by which the hierarchy is checked, verified before it is relied upon.
-///
-/// The claim is that DGGAL's `getZoneFromTextID` reads a Z7 text identifier as the digit
-/// path it spells, so that a truncated text names the congruent parent and an extended
-/// one a child. Three things are checked. The engine rejects what is not a path: a digit
-/// 7, a base cell 12, and a deleted pentagon child. The engine prints back exactly the
-/// path it read, here for each truncated text and in `check_identifier` for every zone
-/// of the main and seam samples. And geometrically,
-/// the zone the engine reads from a truncated text contains the child's centroid, in
-/// the sense that the child's centroid lies nearer that zone's centroid than any of that
-/// zone's neighbours': so a truncated text names the cell the child lies in, which is
-/// what a parent is, and not merely some identifier.
-pub fn the_text_route_reads_digit_paths_as_the_hierarchy<S: Subject<T = HexA7, I = Z7>>() {
-    assert_eq!(
-        o::zone_from_text(S::ORACLE, "00641567"),
-        o::NULL_ZONE,
-        "digit 7"
-    );
-    assert_eq!(
-        o::zone_from_text(S::ORACLE, "12"),
-        o::NULL_ZONE,
-        "base cell 12"
-    );
-    assert_eq!(
-        o::zone_from_text(S::ORACLE, "002"),
-        o::NULL_ZONE,
-        "north pentagon, digit 2"
-    );
-    assert_eq!(
-        o::zone_from_text(S::ORACLE, "065"),
-        o::NULL_ZONE,
-        "south pentagon, digit 5"
-    );
-    assert_ne!(
-        o::zone_from_text(S::ORACLE, "003"),
-        o::NULL_ZONE,
-        "north pentagon, digit 3"
-    );
+/// The three kinds of entry in the engine's lists of parents and of children that the
+/// aperture-7 grids drop, in the order in which [`engine_relatives`] tries them, for the
+/// tallies.
+const DROPPED_RELATIVES: [&str; 3] = [
+    "the engine's null zone",
+    "an identifier the engine cannot read back",
+    "a repeat of an entry already listed",
+];
 
-    let mut floor = Floor::new("text route", 2000);
-    // The neighbours of a parent compared with the child's distance to it: counted, so
-    // that an engine list that came back empty could not pass the comparison unseen.
-    let mut neighbours_compared = 0usize;
-    for (lat, lon) in sphere_points(SEED, 400) {
-        for res in [1u8, 4, 7, 10, 12] {
-            let child = o::zone_from_geo(S::ORACLE, lat, lon, i32::from(res));
-            let text = o::text_id(S::ORACLE, child);
-            let parent_text = &text[..text.len() - 1];
-            let parent = o::zone_from_text(S::ORACLE, parent_text);
-            assert_eq!(
-                o::text_id(S::ORACLE, parent),
-                parent_text,
-                "DGGAL prints back {parent_text}"
-            );
-            let cc = o::centroid(S::ORACLE, child);
-            let pc = o::centroid(S::ORACLE, parent);
-            let to_parent = arc_deg(cc, pc);
-            for n in o::neighbors(S::ORACLE, parent) {
-                let to_other = arc_deg(cc, o::centroid(S::ORACLE, n));
-                assert!(
-                    to_parent < to_other,
-                    "{text}: its centroid is nearer {} than {parent_text} (seed {SEED:#x})",
-                    o::text_id(S::ORACLE, n)
-                );
-                neighbours_compared += 1;
-            }
-            floor.hit();
-        }
-    }
-    eprintln!("text route: {neighbours_compared} neighbours of a parent compared");
-    assert!(
-        neighbours_compared > 0,
-        "no neighbour of any parent was compared (seed {SEED:#x})"
-    );
-}
-
-pub fn congruent_hierarchy_via_text_ids<S: Subject<T = HexA7, I = Z7>>() {
-    let mut floor = Floor::new("hierarchy", 5000);
-    for id in zones::<S>() {
-        let z = S::grid().zone(id);
-        let text = z.text_id();
-        let res = z.resolution();
-        match z.parent() {
-            Some(p) => {
-                assert_eq!(
-                    p.id().0,
-                    o::zone_from_text(S::ORACLE, &text[..text.len() - 1]),
-                    "parent of {text} (seed {SEED:#x})"
-                );
-                assert_eq!(z.parents(), vec![p], "parents of {text} (seed {SEED:#x})");
-                assert_eq!(
-                    z.centroid_parent(),
-                    Some(p),
-                    "centroid parent of {text} (seed {SEED:#x})"
-                );
-                assert!(
-                    z.is_centroid_child() && z.is_immediate_child_of(&p),
-                    "{text} is not its parent's centroid child (seed {SEED:#x})"
-                );
-            }
-            None => assert_eq!(res, 0, "{text} has no parent (seed {SEED:#x})"),
-        }
-        let children: Vec<u64> = z.children().iter().map(|c| c.id().0).collect();
-        if id == ZoneId::NULL || res == S::grid().max_resolution() {
-            assert!(children.is_empty(), "{text} has children (seed {SEED:#x})");
+/// One of the engine's lists of parents or of children as an aperture-7 grid must give it,
+/// and how many entries of each kind of [`DROPPED_RELATIVES`] it left out: the list in its
+/// order, less the engine's null zone, an identifier the engine cannot read back, and a
+/// repeat of an entry already kept, each entry classified live by the first of the three
+/// kinds that fits it, so that every entry left out is re-checked against the engine as one
+/// of the three on every run. The kinds are tried in the order in which this crate drops
+/// them: an identifier that does not read back is never kept, so a second instance of it is
+/// counted as unreadable and not as a repeat.
+fn engine_relatives<S: Subject>(list: Vec<u64>) -> (Vec<u64>, [usize; 3]) {
+    let mut dropped = [0usize; 3];
+    let mut kept: Vec<u64> = Vec::new();
+    for t in list {
+        let kind = if t == o::NULL_ZONE {
+            0
+        } else if !o::engine_can_read(S::ORACLE, t) {
+            1
+        } else if kept.contains(&t) {
+            2
         } else {
-            let omit = if text[..2].parse::<u8>().unwrap() <= 5 {
-                2
-            } else {
-                5
-            };
-            let digits: Vec<u8> = (0..7).filter(|&d| !z.is_pentagon() || d != omit).collect();
-            let want: Vec<u64> = digits
-                .iter()
-                .map(|d| o::zone_from_text(S::ORACLE, &format!("{text}{d}")))
-                .collect();
-            assert_eq!(children, want, "children of {text} (seed {SEED:#x})");
+            kept.push(t);
+            continue;
+        };
+        dropped[kind] += 1;
+    }
+    (kept, dropped)
+}
+
+/// The engine's parents and children of `id`, each as [`engine_relatives`] leaves it, with
+/// the entries left out of the two lists together, asked only where [`engine_may_be_asked`]
+/// allows it and otherwise a failure naming the identifier.
+fn engine_parents_and_children<S: Subject>(id: ZoneId) -> (Vec<u64>, Vec<u64>, [usize; 3]) {
+    assert!(
+        engine_may_be_asked::<S>(id.0),
+        "the engine cannot read {} ({:#018x}) back, and is not asked for its parents and \
+         children (seed {SEED:#x})",
+        S::grid().text_id(id),
+        id.0
+    );
+    let (parents, left_out) = engine_relatives::<S>(o::parents(S::ORACLE, id.0));
+    let (children, more) = engine_relatives::<S>(o::children(S::ORACLE, id.0));
+    let dropped = [0, 1, 2].map(|k| left_out[k] + more[k]);
+    (parents, children, dropped)
+}
+
+/// The classes that the comparison of the hierarchy counts by level (see [`Hierarchy`]).
+/// Every one of them was met in the broken seams alone.
+///
+/// The entries left out of the engine's lists of parents and of children, by the kind of
+/// entry, in the order of [`DROPPED_RELATIVES`].
+const LEFT_OUT_OF_PARENTS: [&str; 3] = [
+    "parents: the engine's null zone left out",
+    "parents: an identifier the engine cannot read back left out",
+    "parents: a repeat left out",
+];
+const LEFT_OUT_OF_CHILDREN: [&str; 3] = [
+    "children: the engine's null zone left out",
+    "children: an identifier the engine cannot read back left out",
+    "children: a repeat left out",
+];
+/// A zone above level 0 with no parent: the engine names none, or none that it reads back.
+const NO_PARENT: &str = "no parent above level 0";
+/// A zone whose first parent is not the zone its identifier names with the last digit
+/// dropped.
+const FIRST_PARENT_ELSEWHERE: &str = "a first parent that is not the digit parent";
+/// A zone of whose parents the engine lists one identifier twice.
+const PARENT_TWICE: &str = "a parent listed twice by the engine";
+/// A zone with one parent that is no centroid child; away from the broken seams the zones
+/// with one parent are the centroid children, and no others.
+const ONE_PARENT_NO_CENTROID_CHILD: &str = "one parent and no centroid child";
+/// A zone at which the first of the engine's parents that the engine calls a centroid child
+/// is an identifier it cannot read back, which this crate does not hand out: the centroid
+/// parent here is the first centroid child among the parents that are kept, or none.
+const CENTROID_PARENT_UNREADABLE: &str =
+    "the engine's first centroid child among the parents cannot be read back";
+/// A zone below the finest level with no children at all.
+const NO_CHILDREN: &str = "no children below the finest level";
+/// A child, counted at the level of the zone that lists it, which does not name that zone
+/// among its own parents. Every child is asked from level 14, where the seams begin to
+/// shorten the lists; below it two or three of the thirteen are asked, in rotation, so that
+/// the count there is of the children asked and not of every child.
+const CHILD_NAMES_ANOTHER: &str = "a child that does not name the zone among its parents";
+/// A zone whose identifier with one digit more does not name the first of its children,
+/// taken as a set.
+const DIGIT_CHILDREN_ELSEWHERE: &str = "the digit children not the first of the children";
+/// A zone of whose children an entry is left out and which is all the same the zone found
+/// at its own centroid: the shortened lists are met by one who quantises positions.
+const CHILDREN_LEFT_OUT_AT_A_ZONE_OF_A_POSITION: &str =
+    "children left out at a zone found at its own centroid";
+
+/// The three predicates of the hierarchy, in the order of `Hierarchy::predicates`.
+const PREDICATES: [&str; 3] = ["is_immediate_child_of", "is_sibling_of", "is_ancestor_of"];
+
+/// The coarsest level at which the broken seams were measured to shorten a list of
+/// children; the lists of parents depart from 15.
+const SEAMS_FROM_LEVEL: u8 = 14;
+
+/// What is recorded of one sample of one grid: every class the comparison counted, with its
+/// count at each level at which it was met. The comparison is of the whole table, so a class
+/// that appears, vanishes or moves by one zone at one level fails it.
+type HierarchyCounts = &'static [(&'static str, &'static [(u8, usize)])];
+
+/// How far a point lies from the nearest broken seam of the grid under test, in degrees.
+pub(super) fn broken_seam_distance_deg<S: Subject>(lat: f64, lon: f64) -> f64 {
+    let v = icosahedron_vertices();
+    unresolved::regions::<S>()
+        .iter()
+        .flat_map(|r| r.edges)
+        .map(|&(i, j)| dist_to_arc_deg((lat, lon), v[i], v[j]))
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Whether `id` is the zone found at its own centroid, at its own level: the engine's zone
+/// at the engine's centroid of it, and this crate's zone at this crate's, which must give
+/// one answer to the question. Where it is not, no one who obtains zones from positions is
+/// handed `id` at its own centre.
+fn found_at_its_own_centroid<S: Subject>(id: ZoneId) -> bool {
+    let g = S::grid();
+    let (lat, lon) = o::centroid(S::ORACLE, id.0);
+    let theirs = o::zone_from_geo(S::ORACLE, lat, lon, o::level(S::ORACLE, id.0));
+    let c = g.centroid(id);
+    let ours = g
+        .zone_from_geo(c.lat, c.lon, g.resolution(id))
+        .unwrap()
+        .id();
+    assert_eq!(
+        ours == id,
+        theirs == id.0,
+        "{}: at its own centroid this crate finds {} and the engine {} (seed {SEED:#x})",
+        g.text_id(id),
+        g.text_id(ours),
+        o::text_id(S::ORACLE, theirs)
+    );
+    theirs == id.0
+}
+
+/// Tallies of the aperture-7 hierarchy compared with the engine's, over one sample.
+#[derive(Default)]
+struct Hierarchy {
+    /// Zones compared.
+    zones: usize,
+    /// Every class met, by level: see the constants above and [`HierarchyCounts`].
+    classes: BTreeMap<&'static str, BTreeMap<u8, usize>>,
+    /// Whether the zone under comparison was counted in a class.
+    in_a_class: bool,
+    /// Zones counted in a class, and the farthest that one lies from a broken seam, in
+    /// degrees.
+    zones_in_a_class: usize,
+    reach_deg: f64,
+    /// Zones with one parent and with two; hexagons with thirteen children and pentagons
+    /// with eleven; zones of the finest level; centroid children; zones with a centroid
+    /// parent.
+    one_parent: usize,
+    two_parents: usize,
+    thirteen: usize,
+    eleven: usize,
+    finest: usize,
+    centroid_children: usize,
+    with_centroid_parent: usize,
+    /// Answers compared with the engine's for each of [`PREDICATES`]: `false`, then `true`.
+    predicates: [[usize; 2]; 3],
+}
+
+impl Hierarchy {
+    fn count(&mut self, class: &'static str, level: u8, n: usize) {
+        if n > 0 {
+            *self
+                .classes
+                .entry(class)
+                .or_default()
+                .entry(level)
+                .or_default() += n;
+            self.in_a_class = true;
+        }
+    }
+
+    /// One predicate of [`PREDICATES`] on the pair `(a, b)`, this crate's answer against the
+    /// engine's, exactly; returns the answer.
+    fn predicate<S: Subject<T = HexA7, I = Z7>>(&mut self, which: usize, a: u64, b: u64) -> bool {
+        let g = S::grid();
+        let (za, zb) = (g.zone(ZoneId(a)), g.zone(ZoneId(b)));
+        let (ours, theirs) = match which {
+            0 => (
+                za.is_immediate_child_of(&zb),
+                o::is_immediate_child_of(S::ORACLE, a, b),
+            ),
+            1 => (za.is_sibling_of(&zb), o::are_siblings(S::ORACLE, a, b)),
+            _ => (za.is_ancestor_of(&zb), o::is_ancestor_of(S::ORACLE, a, b)),
+        };
+        assert_eq!(
+            ours,
+            theirs,
+            "{} of {} and {}, against the engine's (seed {SEED:#x})",
+            PREDICATES[which],
+            za.text_id(),
+            zb.text_id()
+        );
+        self.predicates[which][usize::from(ours)] += 1;
+        ours
+    }
+
+    /// Compares one zone with the engine (see [`Hierarchy::lists_and_classes`] and
+    /// [`Hierarchy::predicates_on_pairs`]), and holds every zone counted in a class to the
+    /// band about the broken seams that the suites use, [`div::BROKEN_SEAM_BAND_DEG`].
+    fn compare<S: Subject<T = HexA7, I = Z7>>(&mut self, id: ZoneId) {
+        self.in_a_class = false;
+        self.zones += 1;
+        if let Some((parents, children)) = self.lists_and_classes::<S>(id) {
+            self.predicates_on_pairs::<S>(id, &parents, &children);
+        }
+        if self.in_a_class {
+            let g = S::grid();
+            let c = g.centroid(id);
             assert!(
-                !want.contains(&o::NULL_ZONE),
-                "a child of {text} is null (seed {SEED:#x})"
+                div::near_broken_seam::<S>(c.lat, c.lon),
+                "{} is counted in a class of the broken seams and lies {:e} degrees from \
+                 them (seed {SEED:#x})",
+                g.text_id(id),
+                broken_seam_distance_deg::<S>(c.lat, c.lon)
             );
-            if z.is_pentagon() {
-                assert_eq!(
-                    o::zone_from_text(S::ORACLE, &format!("{text}{omit}")),
-                    o::NULL_ZONE,
-                    "the deleted pentagon child of {text} (seed {SEED:#x})"
+            self.zones_in_a_class += 1;
+            self.reach_deg = self
+                .reach_deg
+                .max(broken_seam_distance_deg::<S>(c.lat, c.lon));
+        }
+    }
+
+    /// The zone's parents and its children as sequences against the engine's lists less the
+    /// three kinds, with every entry left out re-checked live (see [`engine_relatives`]) and
+    /// counted by kind and by level; whether it is a centroid child; its centroid parent;
+    /// its primary parent; and the classes that the broken seams produce, each counted by
+    /// level. Returns the two lists, or nothing for the null zone, which has no relatives.
+    fn lists_and_classes<S: Subject<T = HexA7, I = Z7>>(
+        &mut self,
+        id: ZoneId,
+    ) -> Option<(Vec<u64>, Vec<u64>)> {
+        let g = S::grid();
+        let text = g.text_id(id);
+        let texts = |list: &[u64]| -> Vec<String> {
+            list.iter().map(|&z| o::text_id(S::ORACLE, z)).collect()
+        };
+        assert!(
+            engine_may_be_asked::<S>(id.0),
+            "the engine cannot read {text} ({:#018x}) back, and is not asked for its parents \
+             and children (seed {SEED:#x})",
+            id.0
+        );
+        let raw_parents = o::parents(S::ORACLE, id.0);
+        let raw_children = o::children(S::ORACLE, id.0);
+        let (parents, left_out_of_parents) = engine_relatives::<S>(raw_parents.clone());
+        let (children, left_out_of_children) = engine_relatives::<S>(raw_children.clone());
+        let ours: Vec<u64> = g.parents(id).iter().map(|z| z.0).collect();
+        assert_eq!(
+            ours,
+            parents,
+            "parents of {text}, against the engine's less the three kinds, from the engine's \
+             list {:?} (seed {SEED:#x})",
+            texts(&raw_parents)
+        );
+        let ours: Vec<u64> = g.children(id).iter().map(|z| z.0).collect();
+        // Said first of the one case that an empty list could hide: where the engine names a
+        // child that is kept, this crate names children.
+        assert!(
+            children.is_empty() || !ours.is_empty(),
+            "{text} has no children here, and the engine's are {:?} (seed {SEED:#x})",
+            texts(&children)
+        );
+        assert_eq!(
+            ours,
+            children,
+            "children of {text}, against the engine's less the three kinds, from the engine's \
+             list {:?} (seed {SEED:#x})",
+            texts(&raw_children)
+        );
+        assert_eq!(
+            g.zone(id).parent().map(|p| p.id().0),
+            parents.first().copied(),
+            "the primary parent of {text} is not the first of its parents (seed {SEED:#x})"
+        );
+
+        // The centroid child, and the centroid parent: the engine's own function answers its
+        // null zone everywhere, and what it defines is taken from its own list.
+        let centroid_child = g.is_centroid_child(id);
+        assert_eq!(
+            centroid_child,
+            o::is_centroid_child(S::ORACLE, id.0),
+            "whether {text} is a centroid child (seed {SEED:#x})"
+        );
+        assert_eq!(
+            o::centroid_parent(S::ORACLE, id.0),
+            o::NULL_ZONE,
+            "the engine now names a centroid parent of {text} (seed {SEED:#x})"
+        );
+        let centroid_parent = g.centroid_parent(id).map(|z| z.0);
+        let mut first_of_the_engines = None;
+        for &p in &raw_parents {
+            // Asked of the engine's raw parents, of which some are identifiers that it cannot
+            // read back: on purpose, and safe, since its `isZoneCentroidChild` reads a digit
+            // of the identifier and follows no relation of the zone.
+            if o::is_centroid_child(S::ORACLE, p) {
+                first_of_the_engines = Some(p);
+                break;
+            }
+        }
+        if id == ZoneId::NULL {
+            // The null zone has no level and no relatives, on either side.
+            assert!(
+                raw_parents.is_empty() && raw_children.is_empty() && centroid_parent.is_none(),
+                "the null zone has relatives (seed {SEED:#x})"
+            );
+            return None;
+        }
+        let res = g.resolution(id);
+        if centroid_parent != first_of_the_engines {
+            // The one way in which the two part: the engine's first is an identifier it
+            // cannot read back, which is left out of the parents, and this crate answers
+            // the first centroid child of those that remain.
+            let unreadable = first_of_the_engines.expect("the engine names one where we do");
+            let mut first_kept = None;
+            for &p in &parents {
+                if o::is_centroid_child(S::ORACLE, p) {
+                    first_kept = Some(p);
+                    break;
+                }
+            }
+            assert!(
+                !o::engine_can_read(S::ORACLE, unreadable) && centroid_parent == first_kept,
+                "centroid parent of {text}: ours {:?}, the first centroid child of the \
+                 engine's list {}, of {:?} (seed {SEED:#x})",
+                centroid_parent.map(|z| g.text_id(ZoneId(z))),
+                o::text_id(S::ORACLE, unreadable),
+                texts(&raw_parents)
+            );
+            self.count(CENTROID_PARENT_UNREADABLE, res, 1);
+        }
+        self.centroid_children += usize::from(centroid_child);
+        self.with_centroid_parent += usize::from(centroid_parent.is_some());
+
+        // The entries left out, by kind and by level.
+        for k in 0..3 {
+            self.count(LEFT_OUT_OF_PARENTS[k], res, left_out_of_parents[k]);
+            self.count(LEFT_OUT_OF_CHILDREN[k], res, left_out_of_children[k]);
+        }
+
+        // The parents.
+        match parents.len() {
+            1 => self.one_parent += 1,
+            2 => self.two_parents += 1,
+            _ => {}
+        }
+        if parents.len() == 1 && !centroid_child {
+            self.count(ONE_PARENT_NO_CENTROID_CHILD, res, 1);
+        }
+        let twice = (1..raw_parents.len()).any(|i| raw_parents[..i].contains(&raw_parents[i]));
+        self.count(PARENT_TWICE, res, usize::from(twice));
+        if res == 0 {
+            assert!(
+                raw_parents.is_empty(),
+                "{text} has a parent (seed {SEED:#x})"
+            );
+        } else {
+            let shorter = &text[..text.len() - 1];
+            let digit_parent = g.zone_from_text(shorter).map(|z| z.id().0).ok();
+            assert_eq!(
+                digit_parent.unwrap_or(o::NULL_ZONE),
+                o::zone_from_text(S::ORACLE, shorter),
+                "{shorter}, read on both sides (seed {SEED:#x})"
+            );
+            let class = match parents.first() {
+                None => Some(NO_PARENT),
+                Some(&p) if Some(p) != digit_parent => Some(FIRST_PARENT_ELSEWHERE),
+                Some(_) => None,
+            };
+            if let Some(class) = class {
+                self.count(class, res, 1);
+                // What matters to a caller: such an identifier is not the zone of its own
+                // centre, so that no one who quantises positions is handed it there.
+                assert!(
+                    !found_at_its_own_centroid::<S>(id),
+                    "{text} ({class}) is the zone found at its own centroid: the anomalies \
+                     of the parents are then met by positions too (seed {SEED:#x})"
                 );
             }
         }
-        floor.hit();
-    }
-}
 
-/// `is_ancestor_of` and `is_sibling_of` have no DGGAL counterpart for the congruent
-/// hierarchy, so they are checked against a composition of the engine's answers, read
-/// through its `getZoneFromTextID`, which takes a Z7 text as the digit path it spells
-/// (see `the_text_route_reads_digit_paths_as_the_hierarchy`).
-///
-/// Ancestry is prefix order on the text. Every proper prefix of a zone's text names, in
-/// the engine, a zone of which ours must say it is an ancestor, and the zone the engine
-/// reads from the text extended by one digit is a descendant. The negatives come from
-/// the engine as well: no neighbour of the zone's parent, in the engine's own list, is
-/// an ancestor, nor is the zone itself.
-///
-/// Siblings are texts of the same length that agree but for their last digit. Every
-/// child the engine reads under the zone's parent is a sibling but the zone itself,
-/// which is not its own sibling, and under a pentagon the engine must refuse the
-/// deleted child; each of the engine's neighbours of the zone is a sibling exactly
-/// when its text shares the parent's prefix. A zone at resolution 0 has no parent and
-/// so no sibling, itself included.
-///
-/// The null zone, which the sample holds at odd resolutions of 15 and above, has no
-/// parents, so it is ancestor and sibling of nothing, and nothing is either to it.
-pub fn ancestry_and_siblings_via_text_ids<S: Subject<T = HexA7, I = Z7>>() {
-    let g = S::grid();
-    let mut floor = Floor::new("ancestry and siblings", 1000);
-    let root = g.zone_from_text("00").unwrap();
-    let mut null_zone_checked = 0usize;
-    for id in zones::<S>()
-        .into_iter()
-        .step_by(5)
-        .chain(std::iter::once(ZoneId::NULL))
-    {
-        let z = g.zone(id);
-        let text = z.text_id();
-        if id == ZoneId::NULL {
+        // The children. The engine's own list is never short: what shortens a list is what
+        // is left out of it.
+        if res == g.max_resolution() {
             assert!(
-                !z.is_ancestor_of(&root)
-                    && !root.is_ancestor_of(&z)
-                    && !z.is_sibling_of(&root)
-                    && !root.is_sibling_of(&z)
-                    && !z.is_sibling_of(&z),
-                "the null zone is related to something (seed {SEED:#x})"
+                raw_children.is_empty(),
+                "{text} has children (seed {SEED:#x})"
             );
-            null_zone_checked += 1;
-            floor.hit();
-            continue;
+            self.finest += 1;
+        } else {
+            let pentagon = g.is_pentagon(id);
+            assert_eq!(
+                raw_children.len(),
+                if pentagon { 11 } else { 13 },
+                "the entries of the engine's list of the children of {text} (seed {SEED:#x})"
+            );
+            match (children.len(), pentagon) {
+                (13, false) => self.thirteen += 1,
+                (11, true) => self.eleven += 1,
+                _ => {}
+            }
+            self.count(NO_CHILDREN, res, usize::from(children.is_empty()));
+            let digit_children: BTreeSet<u64> = (0..7)
+                .filter_map(|d| g.zone_from_text(&format!("{text}{d}")).ok())
+                .map(|z| z.id().0)
+                .collect();
+            let first: BTreeSet<u64> = children
+                .iter()
+                .take(digit_children.len())
+                .copied()
+                .collect();
+            self.count(
+                DIGIT_CHILDREN_ELSEWHERE,
+                res,
+                usize::from(first != digit_children),
+            );
+            if left_out_of_children != [0; 3] && found_at_its_own_centroid::<S>(id) {
+                self.count(CHILDREN_LEFT_OUT_AT_A_ZONE_OF_A_POSITION, res, 1);
+            }
         }
-        let engine = |t: &str| g.zone(ZoneId(o::zone_from_text(S::ORACLE, t)));
+        Some((parents, children))
+    }
 
-        // Ancestors: every proper prefix, and nothing the other way round.
-        for len in 2..text.len() {
-            let prefix = &text[..len];
-            let a = engine(prefix);
-            assert_ne!(
-                a.id().0,
-                o::NULL_ZONE,
-                "DGGAL reads no zone from {prefix} (seed {SEED:#x})"
-            );
+    /// The three predicates against the engine's `isZoneImmediateChildOf`,
+    /// `areZonesSiblings` and `isZoneAncestorOf`, exactly, on pairs drawn from the lists of
+    /// the zone, which [`Hierarchy::lists_and_classes`] has compared, and from this crate's
+    /// lists of those zones, each of which the engine must read back before it is asked.
+    ///
+    /// The pairs are drawn in rotation, so that the comparison costs little at each zone and
+    /// reaches every position of a list over the sample. At every zone: the zone with each
+    /// parent, and with its children, each of them from the level at which the broken seams
+    /// begin to shorten the lists and two or three below it. At one zone in four, about one
+    /// parent: the parent as an ancestor, and as no child and no sibling; a sibling through
+    /// it, both ways; a zone that shares a parent with that sibling, and perhaps none with
+    /// this zone; each grandparent; and a child as a descendant. At one zone in sixteen, the
+    /// two questions that are answered only at the top of the hierarchy: whether the zone
+    /// is an ancestor of its parent, and whether a child of a grandparent is one of the zone.
+    fn predicates_on_pairs<S: Subject<T = HexA7, I = Z7>>(
+        &mut self,
+        id: ZoneId,
+        parents: &[u64],
+        children: &[u64],
+    ) {
+        let g = S::grid();
+        let text = g.text_id(id);
+        let res = g.resolution(id);
+        let asked = |z: ZoneId| {
             assert!(
-                a.is_ancestor_of(&z) && !z.is_ancestor_of(&a),
-                "{prefix} is not an ancestor of {text} (seed {SEED:#x})"
+                engine_may_be_asked::<S>(z.0),
+                "the engine cannot read {} back, a relative of a relative of {text} (seed \
+                 {SEED:#x})",
+                g.text_id(z)
             );
+            z.0
+        };
+        let n = self.zones;
+        for &p in parents {
+            assert!(
+                self.predicate::<S>(0, id.0, p),
+                "{text} is no child of its parent (seed {SEED:#x})"
+            );
+        }
+        for (j, &c) in children.iter().enumerate() {
+            if res >= SEAMS_FROM_LEVEL || j % 6 == n % 6 {
+                let named = self.predicate::<S>(0, c, id.0);
+                self.count(CHILD_NAMES_ANOTHER, res, usize::from(!named));
+            }
+        }
+        if n % 4 != 0 {
+            return;
+        }
+        let turn = n / 4;
+        if let Some(&c) = children.get(turn % children.len().max(1)) {
+            let child = self.predicate::<S>(0, c, id.0);
+            assert_eq!(
+                self.predicate::<S>(2, id.0, c),
+                child,
+                "{text} and its child {} (seed {SEED:#x})",
+                g.text_id(ZoneId(c))
+            );
+        }
+        let Some(&p) = parents.get(turn % parents.len().max(1)) else {
+            return;
+        };
+        assert!(
+            self.predicate::<S>(2, p, id.0),
+            "the parent of {text} is no ancestor of it (seed {SEED:#x})"
+        );
+        assert!(
+            !self.predicate::<S>(0, p, id.0) && !self.predicate::<S>(1, id.0, p),
+            "the parent of {text} is its child or its sibling (seed {SEED:#x})"
+        );
+        let siblings = g.children(ZoneId(p));
+        if let Some(&s) = siblings.get(turn % siblings.len().max(1)) {
+            let s = asked(s);
+            assert_eq!(
+                self.predicate::<S>(1, id.0, s),
+                self.predicate::<S>(1, s, id.0),
+                "{text} and {} are siblings one way only (seed {SEED:#x})",
+                g.text_id(ZoneId(s))
+            );
+            if let Some(&q) = g.parents(ZoneId(s)).last() {
+                let cousins = g.children(q);
+                if let Some(&t) = cousins.get(turn / 13 % cousins.len().max(1)) {
+                    self.predicate::<S>(1, id.0, asked(t));
+                }
+            }
+        }
+        let grandparents = g.parents(ZoneId(p));
+        for &gp in &grandparents {
+            let gp = asked(gp);
+            assert!(
+                self.predicate::<S>(2, gp, id.0) && !self.predicate::<S>(0, id.0, gp),
+                "the grandparent {} of {text} (seed {SEED:#x})",
+                g.text_id(ZoneId(gp))
+            );
+        }
+        if turn % 4 != 0 {
+            return;
         }
         assert!(
-            !z.is_ancestor_of(&z),
-            "{text} is its own ancestor (seed {SEED:#x})"
+            !self.predicate::<S>(2, id.0, p),
+            "{text} is an ancestor of its parent (seed {SEED:#x})"
         );
-        if z.resolution() < g.max_resolution() {
-            let child_text = format!("{text}0");
-            let c = engine(&child_text);
-            assert!(
-                z.is_ancestor_of(&c) && !c.is_ancestor_of(&z),
-                "{text} is not an ancestor of {child_text} (seed {SEED:#x})"
-            );
-        }
-
-        let Some(prefix) = text.get(..text.len() - 1).filter(|p| p.len() >= 2) else {
-            // Resolution 0: no parent, so no sibling, not even itself.
-            assert!(
-                !z.is_sibling_of(&z),
-                "{text} at resolution 0 is its own sibling (seed {SEED:#x})"
-            );
-            for n in o::neighbors(S::ORACLE, id.0) {
-                assert!(
-                    !z.is_sibling_of(&g.zone(ZoneId(n))),
-                    "{text} at resolution 0 has the sibling {} (seed {SEED:#x})",
-                    o::text_id(S::ORACLE, n)
-                );
-            }
-            floor.hit();
-            continue;
-        };
-
-        // Not an ancestor: the engine's neighbours of the parent.
-        for n in o::neighbors(S::ORACLE, o::zone_from_text(S::ORACLE, prefix)) {
-            let nt = o::text_id(S::ORACLE, n);
-            let expected = nt.len() < text.len() && text.starts_with(&nt);
-            assert_eq!(
-                g.zone(ZoneId(n)).is_ancestor_of(&z),
-                expected,
-                "is {nt}, a neighbour of {prefix}, an ancestor of {text} (seed {SEED:#x})"
-            );
-        }
-
-        // Siblings: the parent's children, as the engine reads them, but the zone's own
-        // digit, which names the zone itself and so is no sibling of it.
-        let omit = if text[..2].parse::<u8>().unwrap() <= 5 {
-            '2'
-        } else {
-            '5'
-        };
-        let parent_is_pentagon = prefix[2..].bytes().all(|b| b == b'0');
-        for d in '0'..='6' {
-            let st = format!("{prefix}{d}");
-            let s = engine(&st);
-            if parent_is_pentagon && d == omit {
+        if let Some(&gp) = grandparents.get(turn / 4 % grandparents.len().max(1)) {
+            let uncles = g.children(gp);
+            if let Some(&u) = uncles.get(turn / 4 % uncles.len().max(1)) {
                 assert_eq!(
-                    s.id().0,
-                    o::NULL_ZONE,
-                    "DGGAL reads the deleted pentagon child {st} (seed {SEED:#x})"
-                );
-                assert!(
-                    !z.is_sibling_of(&s),
-                    "{text} has the null zone as a sibling (seed {SEED:#x})"
-                );
-            } else if st == text {
-                assert_eq!(
-                    s.id(),
-                    z.id(),
-                    "the engine reads {st} as something other than {text} itself (seed {SEED:#x})"
-                );
-                assert!(
-                    !z.is_sibling_of(&s),
-                    "{text} is its own sibling (seed {SEED:#x})"
-                );
-            } else {
-                assert_ne!(
-                    s.id().0,
-                    o::NULL_ZONE,
-                    "DGGAL reads no zone from {st} (seed {SEED:#x})"
-                );
-                assert!(
-                    z.is_sibling_of(&s) && s.is_sibling_of(&z),
-                    "{st} is not a sibling of {text} (seed {SEED:#x})"
+                    self.predicate::<S>(2, asked(u), id.0),
+                    parents.contains(&u.0),
+                    "{}, a child of a grandparent of {text}, as its ancestor (seed {SEED:#x})",
+                    g.text_id(u)
                 );
             }
         }
+    }
 
-        // Siblings or not: the engine's neighbours of the zone, by their text. The engine
-        // sometimes lists the zone itself among its own neighbours (one of the kinds of
-        // entry in `DROPPED`), which is excluded here too, since a zone is not its own
-        // sibling.
-        for n in o::neighbors(S::ORACLE, id.0) {
-            let nt = o::text_id(S::ORACLE, n);
-            let expected = n != id.0 && nt.len() == text.len() && nt.starts_with(prefix);
-            assert_eq!(
-                z.is_sibling_of(&g.zone(ZoneId(n))),
-                expected,
-                "is {nt}, a neighbour of {text}, a sibling (seed {SEED:#x})"
+    /// Prints the tallies of one sample; holds them to the floors given, in the order of
+    /// the tallies as they are printed and then of the predicates, `false` before `true`;
+    /// and holds the classes to what is recorded of them: every class, at every level,
+    /// exactly.
+    fn finish<S: Subject>(&self, what: &str, floors: [usize; 13], recorded: HierarchyCounts) {
+        eprintln!(
+            "{what}: {} zones; {} with one parent and {} with two; {} hexagons with thirteen \
+             children and {} pentagons with eleven; {} of the finest level; {} centroid \
+             children and {} zones with a centroid parent; {} zones counted in a class of \
+             the broken seams, the farthest {:e} degrees from them",
+            self.zones,
+            self.one_parent,
+            self.two_parents,
+            self.thirteen,
+            self.eleven,
+            self.finest,
+            self.centroid_children,
+            self.with_centroid_parent,
+            self.zones_in_a_class,
+            self.reach_deg
+        );
+        for (name, [no, yes]) in PREDICATES.iter().zip(self.predicates) {
+            eprintln!("  {name}: {yes} pairs true and {no} false, as the engine answers");
+        }
+        for (class, by_level) in &self.classes {
+            eprintln!(
+                "  {class}: {} {by_level:?}",
+                by_level.values().sum::<usize>()
             );
         }
+        let [[c0, c1], [s0, s1], [a0, a1]] = self.predicates;
+        let tallies = [
+            self.one_parent,
+            self.two_parents,
+            self.thirteen,
+            self.eleven,
+            self.finest,
+            self.centroid_children,
+            self.with_centroid_parent,
+            c0,
+            c1,
+            s0,
+            s1,
+            a0,
+            a1,
+        ];
+        assert!(
+            tallies.iter().zip(floors).all(|(&n, min)| n >= min),
+            "{what} on {}: the tallies {tallies:?} are below the floors {floors:?} (seed \
+             {SEED:#x})",
+            S::NAME
+        );
+        let recorded: BTreeMap<&str, BTreeMap<u8, usize>> = recorded
+            .iter()
+            .map(|(class, by_level)| (*class, by_level.iter().copied().collect()))
+            .collect();
+        assert_eq!(
+            self.classes,
+            recorded,
+            "{what} on {}: the classes counted by level, against what is recorded of the \
+             grid (seed {SEED:#x})",
+            S::NAME
+        );
+    }
+}
+
+/// What is recorded of the hierarchy of the grid under test over the zones of [`zones`], the
+/// sample that positions give. The zones are those each grid's projection makes of the
+/// points, and so the counts differ by grid. No list of parents has an entry left out, no
+/// zone lacks a parent or has another first parent than its identifier names, and the
+/// children that the identifier names are the first of the list everywhere; what the sample
+/// does meet, at 49 zones on IGEO7, 39 on IVEA7H and 38 on RTEA7H, is children left out,
+/// children that name other parents, and a zone that is no centroid child with one parent.
+fn main_hierarchy_counts<S: Subject>() -> HierarchyCounts {
+    match S::NAME {
+        "IGEO7" => &[
+            (LEFT_OUT_OF_CHILDREN[0], &[(14, 42), (16, 41), (18, 21)]),
+            (LEFT_OUT_OF_CHILDREN[2], &[(15, 14), (16, 2), (17, 8)]),
+            (
+                CHILDREN_LEFT_OUT_AT_A_ZONE_OF_A_POSITION,
+                &[(14, 12), (15, 4), (16, 7), (17, 3), (18, 7)],
+            ),
+            (
+                CHILD_NAMES_ANOTHER,
+                &[(14, 10), (15, 27), (16, 25), (17, 20), (18, 5)],
+            ),
+            (
+                ONE_PARENT_NO_CENTROID_CHILD,
+                &[(15, 1), (16, 1), (17, 1), (19, 1)],
+            ),
+        ],
+        "IVEA7H" => &[
+            (LEFT_OUT_OF_CHILDREN[0], &[(14, 26), (16, 29), (18, 21)]),
+            (LEFT_OUT_OF_CHILDREN[2], &[(15, 2), (17, 6)]),
+            (
+                CHILDREN_LEFT_OUT_AT_A_ZONE_OF_A_POSITION,
+                &[(14, 8), (15, 1), (16, 7), (17, 3), (18, 7)],
+            ),
+            (
+                CHILD_NAMES_ANOTHER,
+                &[(14, 6), (15, 18), (16, 15), (17, 22), (18, 5)],
+            ),
+            (ONE_PARENT_NO_CENTROID_CHILD, &[(17, 1), (19, 2)]),
+        ],
+        "RTEA7H" => &[
+            (LEFT_OUT_OF_CHILDREN[0], &[(14, 26), (16, 29), (18, 21)]),
+            (LEFT_OUT_OF_CHILDREN[2], &[(15, 2), (17, 6)]),
+            (
+                CHILDREN_LEFT_OUT_AT_A_ZONE_OF_A_POSITION,
+                &[(14, 8), (15, 1), (16, 7), (17, 3), (18, 7)],
+            ),
+            (
+                CHILD_NAMES_ANOTHER,
+                &[(14, 6), (15, 18), (16, 15), (17, 22), (18, 5)],
+            ),
+            (ONE_PARENT_NO_CENTROID_CHILD, &[(17, 1), (19, 1)]),
+        ],
+        other => panic!(
+            "nothing is recorded of the hierarchy of {other}: the classes printed above are \
+             what this run met, and the table is to be filled from them only once each has \
+             been characterised, and never from another grid"
+        ),
+    }
+}
+
+/// What is recorded of the hierarchy over the identifiers of [`seam_texts`]: 2,276 zones,
+/// the same texts on every grid, and, as measured on IGEO7, IVEA7H and RTEA7H, the same
+/// count of every class at every level. A grid of which nothing has been measured is not
+/// handed these counts. The rustdoc of `Grid::parents` quotes three of these numbers (the
+/// 2,276 identifiers, the 107 with no parent and the 98 with another first parent), and the
+/// crate's README the same: a change of this table is a change of both.
+fn seam_hierarchy_counts<S: Subject>() -> HierarchyCounts {
+    match S::NAME {
+        "IGEO7" | "IVEA7H" | "RTEA7H" => &[
+            (LEFT_OUT_OF_PARENTS[1], &[(17, 8), (19, 83)]),
+            (LEFT_OUT_OF_PARENTS[2], &[(17, 1)]),
+            (LEFT_OUT_OF_CHILDREN[0], &[(14, 11), (16, 84), (18, 364)]),
+            (
+                LEFT_OUT_OF_CHILDREN[1],
+                &[(15, 18), (16, 42), (17, 325), (18, 617)],
+            ),
+            (
+                LEFT_OUT_OF_CHILDREN[2],
+                &[(15, 12), (16, 20), (17, 55), (18, 120)],
+            ),
+            (NO_PARENT, &[(16, 6), (17, 2), (18, 88), (19, 11)]),
+            (FIRST_PARENT_ELSEWHERE, &[(17, 8), (18, 5), (19, 85)]),
+            (PARENT_TWICE, &[(17, 1)]),
+            (
+                ONE_PARENT_NO_CENTROID_CHILD,
+                &[(15, 3), (16, 8), (17, 8), (18, 9), (19, 72)],
+            ),
+            (CENTROID_PARENT_UNREADABLE, &[(17, 8), (19, 83)]),
+            (
+                CHILD_NAMES_ANOTHER,
+                &[(14, 2), (15, 31), (16, 41), (17, 273), (18, 295)],
+            ),
+            (
+                DIGIT_CHILDREN_ELSEWHERE,
+                &[(15, 3), (16, 6), (17, 48), (18, 93)],
+            ),
+            (
+                CHILDREN_LEFT_OUT_AT_A_ZONE_OF_A_POSITION,
+                &[(14, 4), (15, 4), (16, 11), (17, 3), (18, 5)],
+            ),
+        ],
+        other => panic!(
+            "nothing is recorded of the hierarchy of {other} at the identifiers built by \
+             text: the classes printed above are what this run met"
+        ),
+    }
+}
+
+/// Every zone of [`zones`] compared with the engine as [`Hierarchy::compare`] does: its
+/// parents and its children as sequences with the engine's `getZoneParents` and
+/// `getZoneChildren`, in its order, less the three kinds of entry this crate drops, each
+/// re-checked live as it is left out (see [`engine_relatives`]); whether it is a centroid
+/// child, its centroid parent and its primary parent; and the three predicates on pairs
+/// drawn from the lists. The null zone, which the sample holds at odd resolutions of 15 and
+/// above, has no parents and no children on either side, and neither has a zone of
+/// resolution 0 a parent nor a zone of the finest resolution a child.
+///
+/// What the sample must reach has a floor, so that no arm of the comparison falls silent,
+/// and what the broken seams do to the lists is counted by class and by level and held to
+/// what is recorded of the grid, exactly. The sample is of zones that positions gave, and
+/// at every one of them the primary parent is the zone that the identifier names with its
+/// last digit dropped: the two anomalies of the parents are not met here.
+pub fn parents_and_children_as_the_engine_lists_them<S: Subject<T = HexA7, I = Z7>>() {
+    let mut floor = Floor::new("parents and children", 5000);
+    let mut h = Hierarchy::default();
+    for id in zones::<S>() {
+        h.compare::<S>(id);
         floor.hit();
     }
-    assert!(
-        null_zone_checked > 0,
-        "the null-zone branch never ran (seed {SEED:#x})"
+    // Measured, on IGEO7, IVEA7H and RTEA7H: 982, 889 and 906 zones with one parent and
+    // 4,613, 4,678 and 4,656 with two; 4,961, 4,945 and 4,940 hexagons with thirteen
+    // children, and 171 pentagons with eleven and 434 zones of the finest level on each; 978,
+    // 886 and 904 centroid children, and 1,573, 1,563 and 1,580 zones with a centroid
+    // parent; and of the predicates, some 50,000 pairs for the immediate child, 5,600 for
+    // the sibling and 5,900 for the ancestor, each answered both ways.
+    h.finish::<S>(
+        "parents and children",
+        [
+            850, 4_500, 4_900, 170, 430, 850, 1_500, 3_900, 45_000, 2_000, 3_300, 600, 5_000,
+        ],
+        main_hierarchy_counts::<S>(),
     );
-    eprintln!("ancestry and siblings: null zone checked {null_zone_checked} time(s)");
+    for class in [NO_PARENT, FIRST_PARENT_ELSEWHERE] {
+        assert!(
+            !h.classes.contains_key(class),
+            "a zone that a position gave has {class} (seed {SEED:#x})"
+        );
+    }
+}
+
+/// The stride at which [`seam_texts`] takes the tails of five digits: prime to 7, so that
+/// every digit takes every value, and wide enough for the sample to cost a few seconds.
+const SEAM_TEXT_STRIDE: usize = 37;
+
+/// Identifiers of the broken seam under base cell 0, built by text: at each level from 14
+/// to 19, `00`, zeros and a tail of five digits, the tails taken at a stride of
+/// [`SEAM_TEXT_STRIDE`] through the 16,807; and eight identifiers known for what the
+/// engine answers of them, among them one of each anomaly of the parents. No position is
+/// behind any of them, and the same texts are asked of every grid.
+pub(super) fn seam_texts() -> Vec<String> {
+    let mut texts: Vec<String> = [
+        // No parent; a first parent that is not the digit parent; a parent listed twice.
+        "00000000000000001311",
+        "0000000000000001644",
+        "0000000000000000136",
+        // The zone found at the centroid of another identifier; and four whose children
+        // have entries left out: null zones, repeats, the polar pentagon's own, and four
+        // entries that the engine cannot read back.
+        "000000000000000140",
+        "0000000000000005",
+        "00000000000000005",
+        "0000000000000000",
+        "00052626050026015",
+    ]
+    .map(String::from)
+    .to_vec();
+    for res in 14..=19usize {
+        for tail in (res..16_807).step_by(SEAM_TEXT_STRIDE) {
+            texts.push(format!(
+                "00{}{}{}{}{}{}",
+                "0".repeat(res - 5),
+                tail / 2401,
+                tail / 343 % 7,
+                tail / 49 % 7,
+                tail / 7 % 7,
+                tail % 7
+            ));
+        }
+    }
+    let mut seen = HashSet::new();
+    texts.retain(|t| seen.insert(t.clone()));
+    texts
+}
+
+/// The hierarchy at identifiers of the broken seam that are built by text, [`seam_texts`],
+/// each compared with the engine as [`Hierarchy::compare`] does, like the zones that
+/// positions give. Here the anomalies of the parents are met: a zone above level 0 with no
+/// parent, a first parent that is not the zone the identifier names with its last digit
+/// dropped, a parent listed twice. Each is counted by level, exactly, and of the first two
+/// it is asserted at every instance that the identifier is not the zone found at its own
+/// centroid, on either side: they are identifiers that a text can name and that no
+/// position of the sample quantises to.
+///
+/// A text that this crate refuses passes through a deleted child of the pentagon, and the
+/// engine must answer its null zone for it.
+pub fn the_hierarchy_at_seam_identifiers_built_by_text<S: Subject<T = HexA7, I = Z7>>() {
+    let g = S::grid();
+    let mut h = Hierarchy::default();
+    let mut refused = 0usize;
+    for text in seam_texts() {
+        let engine_id = o::zone_from_text(S::ORACLE, &text);
+        let Ok(zone) = g.zone_from_text(&text) else {
+            assert_eq!(
+                engine_id,
+                o::NULL_ZONE,
+                "{text}: the engine reads a zone this crate refuses"
+            );
+            refused += 1;
+            continue;
+        };
+        assert_eq!(
+            zone.id().0,
+            engine_id,
+            "{text}: the engine reads another zone"
+        );
+        h.compare::<S>(zone.id());
+    }
+    assert_eq!(
+        (h.zones, refused),
+        (2_276, 456),
+        "identifiers compared, and texts refused on both sides"
+    );
+    // Measured, the same on the three grids: 398 zones with one parent and 1,771 with two;
+    // 1,684 hexagons with thirteen children, and no pentagon with eleven, for the one
+    // pentagon of the sample, of level 14, has an entry left out; 378 zones of the finest
+    // level; 326
+    // centroid children and 572 zones with a centroid parent; and of the predicates 28,968
+    // pairs for the immediate child, 2,172 for the sibling and 2,298 for the ancestor.
+    h.finish::<S>(
+        "seam identifiers built by text",
+        [
+            390, 1_750, 1_650, 0, 370, 320, 560, 2_200, 26_000, 840, 1_300, 280, 2_000,
+        ],
+        seam_hierarchy_counts::<S>(),
+    );
+    // A floor of none cannot fail, so the count is held exactly beside it: a pentagon with
+    // eleven children appearing in this sample must be noticed.
+    assert_eq!(
+        h.eleven, 0,
+        "pentagons with eleven children among the seam identifiers built by text, where the \
+         one pentagon of the sample has an entry left out"
+    );
+}
+
+/// The four methods of the hierarchy and its three predicates, asked of hostile identifiers:
+/// the null zone, the identifiers at the ends of the range, those with no cell behind them,
+/// and 3,000 drawn at random from every level. None panics or fails to end; the typed grid,
+/// `AnyGrid` and `Zone` give one answer; a list holds real zones alone, each once, one level
+/// from the zone; an identifier with no geometry has no relatives; and the predicates agree
+/// with the lists. The engine is not asked: these are not identifiers it may be handed.
+pub fn the_hierarchy_does_not_panic_on_hostile_input<S: Subject<T = HexA7, I = Z7>>() {
+    let g = S::grid();
+    let any = rs4dggs::get_grid(S::NAME).unwrap();
+    let ids = super::geometry::hostile_identifiers::<S>();
+    let floor = ids.len() / 20;
+    let (mut with_relatives, mut without) = (0usize, 0usize);
+    let mut previous = ZoneId::NULL;
+    for (i, id) in ids.into_iter().enumerate() {
+        let id = ZoneId(id);
+        let at = format!("{:#018x}", id.0);
+        let zone = g.zone(id);
+        let parents = g.parents(id);
+        let children = g.children(id);
+        let centroid_parent = g.centroid_parent(id);
+        let centroid_child = g.is_centroid_child(id);
+        let ids_of = |zones: Vec<rs4dggs::Zone<'_, _>>| -> Vec<ZoneId> {
+            zones.iter().map(|z| z.id()).collect()
+        };
+        assert_eq!(any.parents(id), parents, "{at}");
+        assert_eq!(ids_of(zone.parents()), parents, "{at}");
+        assert_eq!(any.children(id), children, "{at}");
+        assert_eq!(ids_of(zone.children()), children, "{at}");
+        assert_eq!(any.centroid_parent(id), centroid_parent, "{at}");
+        assert_eq!(
+            zone.centroid_parent().map(|z| z.id()),
+            centroid_parent,
+            "{at}"
+        );
+        assert_eq!(any.is_centroid_child(id), centroid_child, "{at}");
+        assert_eq!(zone.is_centroid_child(), centroid_child, "{at}");
+        assert_eq!(any.parent(id), parents.first().copied(), "{at}");
+        assert_eq!(
+            zone.parent().map(|z| z.id()),
+            parents.first().copied(),
+            "{at}"
+        );
+
+        assert!(parents.len() <= 2 && children.len() <= 13, "{at}");
+        let res = i32::from(g.resolution(id));
+        for (list, level) in [(&parents, res - 1), (&children, res + 1)] {
+            let distinct: HashSet<ZoneId> = list.iter().copied().collect();
+            assert_eq!(distinct.len(), list.len(), "{at} lists a zone twice");
+            for &r in list {
+                let text = g.text_id(r);
+                assert_eq!(
+                    g.zone_from_text(&text).map(|z| z.id()),
+                    Ok(r),
+                    "{at} lists {text}, which is no zone"
+                );
+                assert_eq!(i32::from(g.resolution(r)), level, "{at} lists {text}");
+            }
+        }
+        if let Some(p) = centroid_parent {
+            assert!(
+                parents.contains(&p) && g.is_centroid_child(p),
+                "{at}: the centroid parent {}",
+                g.text_id(p)
+            );
+        }
+        if g.extent(id).is_none() {
+            assert!(
+                parents.is_empty() && children.is_empty() && centroid_parent.is_none(),
+                "{at} has no geometry and has relatives"
+            );
+        }
+
+        // The predicates: a zone with itself, with each parent, with two children in
+        // rotation, and with the identifier drawn before it, which is of any level or of
+        // none.
+        assert!(
+            !zone.is_immediate_child_of(&zone)
+                && !zone.is_sibling_of(&zone)
+                && !zone.is_ancestor_of(&zone),
+            "{at} is its own relative"
+        );
+        for &p in &parents {
+            let parent = g.zone(p);
+            assert!(
+                zone.is_immediate_child_of(&parent) && parent.is_ancestor_of(&zone),
+                "{at} and its parent {}",
+                g.text_id(p)
+            );
+            assert!(any.is_immediate_child_of(id, p) && any.is_ancestor_of(p, id));
+        }
+        for &c in children.iter().skip(i % 13).take(2) {
+            assert_eq!(
+                g.zone(c).is_immediate_child_of(&zone),
+                g.parents(c).contains(&id),
+                "{at} and its child {}",
+                g.text_id(c)
+            );
+        }
+        let other = g.zone(previous);
+        assert_eq!(
+            zone.is_immediate_child_of(&other),
+            any.is_immediate_child_of(id, previous),
+            "{at} and {:#018x}",
+            previous.0
+        );
+        assert_eq!(
+            zone.is_sibling_of(&other),
+            any.is_sibling_of(id, previous),
+            "{at} and {:#018x}",
+            previous.0
+        );
+        // One in eight, for the walk to the top of the hierarchy is the dearest of them.
+        if i % 8 == 0 {
+            assert_eq!(
+                zone.is_ancestor_of(&other),
+                any.is_ancestor_of(id, previous),
+                "{at} and {:#018x}",
+                previous.0
+            );
+        }
+        previous = id;
+
+        if parents.is_empty() && children.is_empty() {
+            without += 1;
+        } else {
+            with_relatives += 1;
+        }
+    }
+    assert!(
+        with_relatives >= floor && without >= floor,
+        "{with_relatives} identifiers with relatives, {without} without"
+    );
+    eprintln!(
+        "hostile input to the hierarchy on {}: {with_relatives} with relatives, {without} without",
+        S::NAME
+    );
 }
 
 /// The walk `Disk` defines, to radius `k` about `centre`, composed from the lists `list`
@@ -1899,9 +2615,9 @@ pub fn disk_is_composed_neighbours<S: Subject>() {
 /// can judge, the engine's too: the text identifier, its reading back and the resolution;
 /// the centroid and vertices bit for bit, and the vertex count as the pentagon flag;
 /// the neighbour list, as `neighbours_as_the_engine_lists_them` compares it; and the parent and
-/// children, read through the engine's text route as in
-/// `congruent_hierarchy_via_text_ids`. The sub-zone methods, the hierarchy predicates and
-/// the disk, which the engine cannot judge, must equal the typed grid's answers.
+/// children, against the engine's own lists (see `engine_parent_and_children`). The
+/// sub-zone methods, the hierarchy predicates and the disk, which the engine is not asked
+/// to judge here, must equal the typed grid's answers.
 pub fn any_grid_answers_as_the_typed_grid_and_the_engine<S: Subject>() {
     let g = S::grid();
     let any = rs4dggs::get_grid(&S::NAME.to_lowercase())
@@ -2081,7 +2797,7 @@ pub fn any_grid_answers_as_the_typed_grid_and_the_engine<S: Subject>() {
             );
         }
 
-        // The sub-zones, which the aperture-7 grids refuse, and the disk.
+        // The sub-zones, and the disk.
         for depth in [0u8, 1] {
             assert_eq!(
                 any.count_sub_zones(id, depth),
@@ -2138,41 +2854,31 @@ pub fn any_grid_answers_as_the_typed_grid_and_the_engine<S: Subject>() {
 }
 
 /// The engine's side of the parent and children of `id` that `AnyGrid` answered, for
-/// `any_grid_answers_as_the_typed_grid_and_the_engine`. On aperture 7 they are read through
-/// the text route, as in `congruent_hierarchy_via_text_ids`: the parent is the zone the
-/// engine reads from the text shortened by its last digit, and each child is a digit path
-/// one digit longer that the engine reads as that very child. On aperture 3 they are the
-/// engine's own lists, asked where [`engine_may_be_asked`] allows: the parent is the first
-/// of its parents, and the children are its children in its order, but at the finest
-/// resolution, where this crate answers none.
+/// `any_grid_answers_as_the_typed_grid_and_the_engine`. They are the engine's own lists,
+/// asked where [`engine_may_be_asked`] allows: the parent is the first of its parents, and
+/// the children are its children in its order. On aperture 7 the lists are taken less the
+/// three kinds of entry this crate drops, as in
+/// `parents_and_children_as_the_engine_lists_them`. On aperture 3 they are taken whole, but
+/// at the finest resolution, where this crate answers no children.
 fn engine_parent_and_children<S: Subject>(
     id: ZoneId,
     parent: Option<ZoneId>,
     children: &[ZoneId],
     at: &str,
 ) {
-    let text = S::grid().text_id(id);
     match S::T::APERTURE {
         7 => {
-            if let Some(p) = parent {
-                assert_eq!(
-                    p.0,
-                    o::zone_from_text(S::ORACLE, &text[..text.len() - 1]),
-                    "parent of {at}, read by the engine from the truncated text"
-                );
-            }
-            for &ch in children {
-                let ct = S::grid().text_id(ch);
-                assert!(
-                    ct.len() == text.len() + 1 && ct.starts_with(&text),
-                    "{ct} is not a digit path below {at}"
-                );
-                assert_eq!(
-                    o::zone_from_text(S::ORACLE, &ct),
-                    ch.0,
-                    "child {ct} of {at}, read by the engine"
-                );
-            }
+            let (their_parents, their_children, _) = engine_parents_and_children::<S>(id);
+            assert_eq!(
+                parent.map(|p| p.0),
+                their_parents.first().copied(),
+                "parent of {at}, the first of the engine's parents less the three kinds"
+            );
+            let ours: Vec<u64> = children.iter().map(|c| c.0).collect();
+            assert_eq!(
+                ours, their_children,
+                "children of {at}, against the engine's less the three kinds"
+            );
         }
         3 => {
             if !engine_may_be_asked::<S>(id.0) {
@@ -2217,57 +2923,194 @@ fn engine_parent_and_children<S: Subject>(
     }
 }
 
-/// The aperture-7 grids define no sub-zone order, so the sub-zone methods refuse rather
-/// than answer. The null zone is refused as an invalid zone, before the question of
-/// order arises, by `sub_zone_index` as by the others.
+/// The sub-zone order of the aperture-7 grids at depth 1, against the engine's: the count,
+/// and the order entry by entry, in which an entry that the engine gives as its null zone,
+/// or as an identifier that it cannot read back, is the null zone here, at the same place.
+/// The first sub-zone and the zone at each index are the entries of that order; the engine
+/// is not asked for the zone at an index, which it answers wrongly at a pentagon at an odd
+/// depth. At depth 0 every answer is the zone itself. A zone of the finest resolution has
+/// no sub-zones below it, where the engine answers nothing, and the request is refused.
+/// The null zone is refused as an invalid zone, before its depth is looked at, by
+/// `sub_zone_index` as by the others.
+///
+/// `sub_zone_index` of the first child of every zone is the engine's `getSubZoneIndex`,
+/// asked live, and the order holds the child at it. It is the child's place in the order
+/// at every zone whose children lie coarser than level 15. From level 15 the engine's walk
+/// may find no index for a child that its order names, and then there is none here, or
+/// answer an index at which its order holds another zone, where there is none here either:
+/// both are counted exactly, per grid, and each such zone is held to the band about the
+/// broken seams.
 ///
 /// `sub_zone_index` of two different zones at one level is a characterised divergence,
 /// re-checked live at every zone of the sample that has a neighbour: the engine answers
 /// 0, having compared only the two levels (`RI7H.ec:229-230`), and this crate answers
 /// `None`, since at depth 0 a zone's only sub-zone is itself.
-pub fn sub_zone_methods_refuse_on_aperture_7<S: Subject<T = HexA7, I = Z7>>() {
+pub fn sub_zones_at_depth_1_as_the_engine_lists_them<S: Subject<T = HexA7, I = Z7>>() {
+    the_limit_on_a_list_of_sub_zones_is_its_ceiling();
     let mut floor = Floor::new("sub-zones", 1000);
     let mut null_zone_checked = 0usize;
     // The two branches that not every zone reaches, counted so that neither can fall
     // silent: a first child to ask about, and a neighbour at the zone's own level.
     let mut children_checked = 0usize;
     let mut same_level_checked = 0usize;
+    // The orders compared with the engine's and their entries; the entries that are the
+    // null zone; and the zones of the finest resolution, which have no order below them.
+    let mut orders = Floor::new("sub-zone orders at depth 1", 900);
+    let (mut entries, mut null_entries, mut finest) = (0usize, 0usize, 0usize);
+    // The first children that the order names and that have no index, as in the engine;
+    // and those for which the engine answers the place of another zone, with none here.
+    let (mut no_index, mut index_of_another) = (0usize, 0usize);
+    let g = S::grid();
     for id in zones::<S>()
         .into_iter()
         .step_by(5)
         .chain(std::iter::once(ZoneId::NULL))
     {
-        let z = S::grid().zone(id);
+        let z = g.zone(id);
         let text = z.text_id();
-        let refused = |r: std::result::Result<(), Error>| match r {
-            Err(Error::NoSubZoneOrder) => id != ZoneId::NULL,
-            Err(Error::InvalidZone(_)) => id == ZoneId::NULL,
-            _ => false,
-        };
-        for depth in [0u8, 1, 2, 19] {
-            assert!(
-                refused(z.count_sub_zones(depth).map(drop)),
-                "count_sub_zones({depth}) of {text}"
-            );
-            assert!(
-                refused(z.first_sub_zone(depth).map(drop)),
-                "first_sub_zone({depth}) of {text}"
-            );
-            assert!(
-                refused(z.sub_zones(depth).map(drop)),
-                "sub_zones({depth}) of {text}"
-            );
-            assert!(
-                refused(z.sub_zone_at_index(depth, 0).map(drop)),
-                "sub_zone_at_index({depth}) of {text}"
-            );
+        let invalid = |r: std::result::Result<(), Error>| matches!(r, Err(Error::InvalidZone(_)));
+        // The order at depth 1, where there is one.
+        let mut order: Vec<ZoneId> = Vec::new();
+        if id == ZoneId::NULL {
+            for depth in [0u8, 1, 2, 19] {
+                assert!(
+                    invalid(z.count_sub_zones(depth).map(drop)),
+                    "count_sub_zones({depth}) of {text}"
+                );
+                assert!(
+                    invalid(z.first_sub_zone(depth).map(drop)),
+                    "first_sub_zone({depth}) of {text}"
+                );
+                assert!(
+                    invalid(z.sub_zones(depth).map(drop)),
+                    "sub_zones({depth}) of {text}"
+                );
+                assert!(
+                    invalid(z.sub_zone_at_index(depth, 0).map(drop)),
+                    "sub_zone_at_index({depth}) of {text}"
+                );
+            }
+        } else {
+            // Depth 0 is the zone itself.
+            assert_eq!(g.count_sub_zones(id, 0), Ok(1), "{text}");
+            assert_eq!(g.sub_zones(id, 0), Ok(vec![id]), "{text}");
+            assert_eq!(g.first_sub_zone(id, 0), Ok(id), "{text}");
+            assert_eq!(g.sub_zone_at_index(id, 0, 0), Ok(id), "{text}");
+            if g.resolution(id) == g.max_resolution() {
+                assert!(
+                    invalid(g.count_sub_zones(id, 1).map(drop)),
+                    "count_sub_zones(1) of {text}"
+                );
+                assert!(
+                    invalid(g.first_sub_zone(id, 1).map(drop)),
+                    "first_sub_zone(1) of {text}"
+                );
+                assert!(
+                    invalid(g.sub_zones(id, 1).map(drop)),
+                    "sub_zones(1) of {text}"
+                );
+                assert!(
+                    invalid(g.sub_zone_at_index(id, 1, 0).map(drop)),
+                    "sub_zone_at_index(1) of {text}"
+                );
+                finest += 1;
+            } else {
+                assert!(
+                    engine_may_be_asked::<S>(id.0),
+                    "the engine cannot read {text} back (seed {SEED:#x})"
+                );
+                let count = g.count_sub_zones(id, 1).unwrap();
+                assert_eq!(
+                    count,
+                    o::count_sub_zones(S::ORACLE, id.0, 1),
+                    "count_sub_zones(1) of {text}, against the engine's"
+                );
+                order = g.sub_zones(id, 1).unwrap();
+                let theirs: Vec<ZoneId> = o::sub_zones(S::ORACLE, id.0, 1)
+                    .into_iter()
+                    .map(|e| {
+                        if e == o::NULL_ZONE || !o::engine_can_read(S::ORACLE, e) {
+                            ZoneId::NULL
+                        } else {
+                            ZoneId(e)
+                        }
+                    })
+                    .collect();
+                assert_eq!(
+                    order, theirs,
+                    "sub_zones(1) of {text}, against the engine's"
+                );
+                assert_eq!(
+                    order.len() as u64,
+                    count,
+                    "the length of the order of {text}"
+                );
+                assert_eq!(
+                    g.first_sub_zone(id, 1),
+                    Ok(order[0]),
+                    "first_sub_zone(1) of {text}"
+                );
+                for (index, &sub) in order.iter().enumerate() {
+                    assert_eq!(
+                        g.sub_zone_at_index(id, 1, index as u64),
+                        Ok(sub),
+                        "sub_zone_at_index(1, {index}) of {text}"
+                    );
+                }
+                assert!(
+                    matches!(
+                        g.sub_zone_at_index(id, 1, count),
+                        Err(Error::IndexOutOfRange { .. })
+                    ),
+                    "sub_zone_at_index(1, {count}) of {text}"
+                );
+                entries += order.len();
+                null_entries += order.iter().filter(|&&s| s == ZoneId::NULL).count();
+                orders.hit();
+            }
         }
         if let Some(c) = z.children().first() {
-            assert_eq!(
-                z.sub_zone_index(c),
-                Err(Error::NoSubZoneOrder),
-                "sub_zone_index of {text}"
-            );
+            // The index of a child is the engine's, and the order holds the child at it:
+            // its place in the order, the first where the order names it twice. Where
+            // there is none, the order does not hold the child and the engine finds none
+            // either; or, in the broken seams, the engine finds none for a child that its
+            // order names, or answers the place of another zone.
+            let place = order.iter().position(|&s| s == c.id()).map(|i| i as u64);
+            let engine = o::sub_zone_index(S::ORACLE, id.0, c.id().0);
+            let ct = c.text_id();
+            match z.sub_zone_index(c) {
+                Ok(Some(i)) => assert_eq!(
+                    (Some(i), i as i64),
+                    (place, engine),
+                    "sub_zone_index of {ct}, the first child of {text}, against its place in \
+                     the order and against the engine's"
+                ),
+                Ok(None) => {
+                    if engine == -1 {
+                        no_index += usize::from(place.is_some());
+                    } else {
+                        assert_ne!(
+                            usize::try_from(engine).ok().and_then(|i| order.get(i)),
+                            Some(&c.id()),
+                            "sub_zone_index of {ct}, the first child of {text}, is none, and \
+                             the engine's is {engine}, where the order holds the child"
+                        );
+                        index_of_another += 1;
+                    }
+                    if place.is_some() || engine != -1 {
+                        let centre = g.centroid(id);
+                        assert!(
+                            c.resolution() >= 15
+                                && div::near_broken_seam::<S>(centre.lat, centre.lon),
+                            "{ct}, the first child of {text}, has no index: the engine's is \
+                             {engine}, the order holds it at {place:?}, and the zone lies \
+                             {:e} degrees from the broken seams (seed {SEED:#x})",
+                            broken_seam_distance_deg::<S>(centre.lat, centre.lon)
+                        );
+                    }
+                }
+                Err(e) => panic!("sub_zone_index of {ct}, the first child of {text}: {e}"),
+            }
             children_checked += 1;
         }
         if let Some(&w) = S::grid().neighbors(id).first() {
@@ -2329,6 +3172,46 @@ pub fn sub_zone_methods_refuse_on_aperture_7<S: Subject<T = HexA7, I = Z7>>() {
     eprintln!(
         "sub-zones: a first child asked about at {children_checked} zones, a neighbour at \
          {same_level_checked}"
+    );
+    assert!(
+        finest > 0,
+        "no zone of the finest resolution was asked (seed {SEED:#x})"
+    );
+    eprintln!(
+        "sub-zones: {} orders at depth 1 as the engine's, {entries} entries, {null_entries} of \
+         them the null zone; {finest} zones of the finest resolution refused; {no_index} first \
+         children that the order names have no index, as in the engine, and {index_of_another} \
+         have none where the engine answers the place of another zone",
+        orders.n
+    );
+    // Held exactly, per grid, so that the reading of the engine's null zone and of an
+    // identifier it cannot read back as the null zone cannot fall silent: the orders, their
+    // entries, the entries that are the null zone, and the zones of the finest resolution;
+    // and, of the first children, those that have no index as in the engine, and those
+    // that have none where the engine answers the place of another zone.
+    let recorded = match S::NAME {
+        "IGEO7" => [1_046, 13_530, 31, 76, 0, 0],
+        "IVEA7H" => [1_021, 13_203, 27, 95, 0, 1],
+        "RTEA7H" => [1_021, 13_207, 27, 94, 0, 1],
+        other => panic!(
+            "nothing is recorded of the sub-zone orders of {other} at depth 1: the counts \
+             printed above are what this run met"
+        ),
+    };
+    assert_eq!(
+        [
+            orders.n,
+            entries,
+            null_entries,
+            finest,
+            no_index,
+            index_of_another
+        ],
+        recorded,
+        "the orders at depth 1, their entries, the entries that are the null zone, the zones \
+         of the finest resolution, the first children without an index as in the engine, and \
+         those without one where the engine answers the place of another zone, against what \
+         is recorded of the grid (seed {SEED:#x})"
     );
 }
 

@@ -1,0 +1,45 @@
+{
+   "title": "IVEA7H_Z7",
+   "description": "An IVEA7H_Z7 Discrete Global Grid Reference System using the Icosahedral Vertex-oriented Equal-Area (IVEA) projection as described in the 2006 'Slice & Dice' publication (equivalent to applying the 1992 Snyder polyhedral projection to the dodecahedron when considering the barycentric coordinates within the projection of the spherical disdyakis triacontahedron triangles constituting full spherical icosahedral symmetry), an orientation symmetric about the equator with a single vertex on land, and WGS84 authalic sphere (a WGS84 geodetic latitude is mapped to the sphere by converting it to an authalic latitude), the same hierarchy of zones and the same sub-zone ordering as IVEA7H, and the Z7 zone indexing system. This definition was written by the rs4dggs project from the registered definition of IVEA7H and from DGGAL; it is not registered with the OGC and holds modifications that the OGC has neither approved nor adopted.",
+   "uri": "https://www.opengis.net/def/dggrs/OGC/1.0/IVEA7H_Z7",
+   "links": [ { "rel": "describedby", "href": "https://www.opengis.net/doc/is/ogcapi-dggs/1.0" } ],
+   "dggh": {
+      "definition": {
+         "spatialDimensions": 2,
+         "temporalDimensions": 0,
+         "links": [
+            { "rel": "related", "href": "https://doi.org/10.1559/152304006779500687" },
+            { "rel": "related", "href": "https://doi.org/10.3138/27H7-8K88-4882-1752" }
+         ],
+         "basePolyhedron": "icosahedron",
+         "refinementRatio": 7,
+         "refinementStrategy": [ "centredChildCell", "nodeSharingChildCell" ],
+         "constraints": {
+            "cellEqualSized": true
+         },
+         "zoneTypes": [ "hexagon", "pentagon" ]
+      },
+      "parameters": {
+         "ellipsoid": "[EPSG:7030]",
+         "orientation":
+         {
+            "description": "IVEA orientation symmetric about the equator with a single icosahedron vertex falling on land, with first icosahedron vertex at authalic latitude equal to the arctangent of the golden ratio (~58.397145907431° N geodetic latitude), 11.20°E longitude, and second vertex due North from that first vertex.",
+            "latitude": 58.397145907431,
+            "longitude": 11.20,
+            "azimuth": 0
+         }
+      }
+   },
+   "zirs": {
+      "textZIRS": {
+         "description": "An identifier made of decimal digits: two digits for the zone of level 0, from 00 to 11, followed by one digit from 0 to 6 for each refinement level of the zone."
+      },
+      "uint64ZIRS": {
+         "description": "A 64-bit integer whose 4 most significant bits hold the zone of level 0 (0 to 11), followed by twenty fields of 3 bits: one for each refinement level from 1 to 19, holding that level's digit (0 to 6), and 7 in every field beyond the zone's level; the twentieth field is always 7."
+      }
+   },
+   "subZoneOrder": {
+      "description": "The zones are ordered in tightly packed scanlines. Scanlines start on a hexagon vertex and run in a clockwise direction. Sub-zones are ordered left to right along a scanline and scanlines are ordered from top to bottom (considering the IVEA planar projection). For polar pentagons, the orientation of the scanlines varies in the IVEA planar projection but is always clockwise, the vertex/edge of the first sub-zone is on the left side of the planar IVEA projection for the north pole (in root rhombus 0), and on the right side for the south pole (in root rhombus 9).",
+      "type": "scanline"
+   }
+}

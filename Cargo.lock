@@ -71,6 +71,14 @@ name = "rs4dggs-cli"
 version = "0.1.0"
 dependencies = [
  "rs4dggs",
+ "rs4dggs-ogc",
+]
+
+[[package]]
+name = "rs4dggs-ogc"
+version = "0.1.0"
+dependencies = [
+ "rs4dggs",
 ]
 
 [[package]]

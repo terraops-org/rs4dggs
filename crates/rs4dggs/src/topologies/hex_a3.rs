@@ -31,7 +31,9 @@
 //! anticlockwise, as on the aperture-7 grids. The coordinates are the engine's own, and the
 //! sub-zones are generated from the engine's own order.
 use super::hex_a3_subzones;
-use crate::fivebysix::{canonicalize5x6, cvtt_i32, move5x6_vertex, move5x6_vertex2};
+use crate::fivebysix::{
+    canonicalize5x6, cvtt_i32, floor_i32, move5x6_vertex, move5x6_vertex2, refine5x6,
+};
 use crate::indexings::{fields, is_readable, pack};
 use crate::{Address, PlanarPoint, Topology};
 
@@ -65,19 +67,6 @@ const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
 /// The finest level `getZoneFromCRSCentroid` quantises at (`RI3H.ec:96`).
 pub(super) const MAX_LEVEL: u8 = 33;
 
-/// The eC's `(int)floor(v)`, as gcc inlined it at `0xca99` to `0xcac6`: the truncation, less one
-/// where the truncation exceeds `v`. That is the floor for every `v` within the range of `int`;
-/// below it the subtraction wraps to `i32::MAX`. The eC writes it inline in `fromCentroid`
-/// (`RI3H.ec:1347-1356`) and in `getNeighbor` (`RI3H.ec:1008-1009`).
-fn floor_i32(v: f64) -> i32 {
-    let t = cvtt_i32(v);
-    if f64::from(t) > v {
-        t.wrapping_sub(1)
-    } else {
-        t
-    }
-}
-
 /// `cvttsd2si` into a 64-bit register, as [`cvtt_i32`] into a 32-bit one.
 ///
 /// No eC counterpart: a machine conversion, which gcc emits within the eC's `(uint64)` casts
@@ -107,7 +96,7 @@ fn to_uint64(v: f64) -> u64 {
 
 /// The eC's `POW3` (`RI3H.ec:29`) for the levels an identifier's five-bit field can hold, all
 /// within `u64`.
-pub(super) fn pow3(level: u64) -> u64 {
+pub(crate) fn pow3(level: u64) -> u64 {
     3u64.pow(level as u32)
 }
 
@@ -653,6 +642,172 @@ fn vertices_from(id: u64, exact_corner: bool) -> Vec<(f64, f64)> {
         ]),
     }
     v
+}
+
+/// The corners in the 5x6 plane from which the refined boundary of a zone is drawn, for a ring
+/// bound for WGS84: five for a polar pentagon and six for every other zone, or `None` where the
+/// eC answers no point. Ports `I3HZone::getBaseRefinedVertices(crs84, vertices)`
+/// (`RI3H.ec:1792-2010`) with `crs84` true, compiled at `0xe540` to `0xf3bf`; the arms it takes
+/// only towards the 5x6 CRS, the caps of the polar pentagons and the doubled corners of the odd
+/// level, are not on the path of a ring bound for WGS84 and are not ported.
+///
+/// It is not [`vertices`], which ports `getVertices`, another function. This one runs
+/// anticlockwise about every zone, where `getVertices` does so about the two polar pentagons
+/// alone, and it begins at another corner; it gives a pentagon off the poles six corners, of
+/// which [`refine5x6`] makes five; on a sub-hex C or D it draws two corners 2e-11 within the
+/// cell's edge, where `getVertices` has them on it; and it does not leave a corner across an
+/// interruption to be canonicalised later, but brings a corner that falls before the layout
+/// forward by a period as it goes.
+///
+/// `None` is the eC's count of zero, for an identifier of a polar root with a non-zero index,
+/// of sub-hex A or B (`RI3H.ec:1846`, `:1875`, `:1921`, `:1944`), from which
+/// `getRefinedVertices` answers a null array; and a root that is none of the twelve, for which the eC reads a row and a column it
+/// never set. `Grid` passes neither.
+fn base_refined_vertices(id: u64) -> Option<Vec<(f64, f64)>> {
+    let (level_i9r, root, rix, sh) = fields(id);
+    if root > 11 || (root >= 10 && rix != 0) {
+        return None;
+    }
+    // RI3H.ec:1796-1807, at `0xe567` to `0xe5b5`: the eC takes the row and the column from
+    // `iLRCFromLRtI`, or from the two polar cells, and the corner from `I9RZone::ri5x6Extent`
+    // (`RI9R.ec:526`, called at `0xe5aa`), which forms the same two products as `top_left`.
+    let ((tx, ty), d) = top_left(level_i9r, root, rix);
+    let mv = |dx: f64, dy: f64| move5x6_vertex(tx, ty, dx, dy);
+    // faithful: sites GB3-1 and GB3-2, in DGGAL v0.0.6 as built with `-O2 -ffast-math`
+    // (`libdggal.so`, BuildID `e75d6ab18f8b460713ebcd21df6f07922fb909c3`). Every `d/3` of this
+    // function is compiled as `d * fl(1/3)` (GB3-1: `0xe610`, `0xe861`, `0xea0a`, `0xeaad`,
+    // `0xec19`, `0xee1e` and `0xf014`) and every `2*d/3` as `d * fl(2/3)` (GB3-2: `0xe9e5`,
+    // `0xead6`, `0xed43` and `0xee2e`): eleven products where the eC divides. The negated
+    // offsets are those products with the sign turned (`xorpd` at `0xe61c`, `0xe87f`, `0xee3f`
+    // and `0xee43`), save in the north polar arm of the even level, which multiplies by
+    // `fl(-1/3)` (`0xec0c`), the same double. The two forms differ by a unit in the last
+    // place at several levels, and either site put back in the eC's order moves rings of the
+    // engine: few, some ten of the 88,000 sampled on a grid, and each is pinned by a ring read
+    // from the engine. The guarded `move5x6Vertex` then adds each offset
+    // to the corner in the eC's order, and the polar fans add their whole numbers as the eC
+    // writes them.
+    let d3 = d * T13;
+    let d23 = d * T23;
+    // RI3H.ec:1882-1883 and its fellows: a corner that falls before the layout, in either
+    // coordinate, is brought forward by a period before the next corner is formed (`0xe8d4`
+    // to `0xe8f2` and `0xf2c8`, and so on for each).
+    let forward = |v: &mut Vec<(f64, f64)>| {
+        if let Some(last) = v.last_mut() {
+            if last.1 < 0.0 || last.0 < 0.0 {
+                *last = (last.0 + 5.0, last.1 + 5.0);
+            }
+        }
+    };
+    // The eC opens both regular arms with the same test on `vertices[numPoints-1]` while
+    // `numPoints` is still zero (RI3H.ec:1879-1880, :1948-1949), and the library compiles it as
+    // written: it loads `vertices[-1]` at `0xe895` and `0xee61` and, where a member is
+    // negative, stores it back plus five at `0xf258` and `0xf350`. That slot lies outside the
+    // array, in the caller's frame (`rsp+0xc0` of `getRefinedVertices`), a temporary of
+    // `ap.Add` that is dead at that moment and written afresh before each of its uses: the
+    // read is of stack residue and the write reaches nothing. It is left out here.
+    let mut v: Vec<(f64, f64)> = Vec::with_capacity(6);
+    match sh {
+        // Even level
+        0 => {
+            if root == 10 {
+                // "North" pole (RI3H.ec:1816-1847, `0xebe8` to `0xec82` and `0xf390`): the
+                // five corners are the first, one to each rhombus of the northern row.
+                let (x, y) = mv(d3, d * MINUS_T13);
+                v.extend([
+                    (x + 5.0, y + 5.0),
+                    (x + 1.0, y + 1.0),
+                    (x + 2.0, y + 2.0),
+                    (x + 3.0, y + 3.0),
+                    (x + 4.0, y + 4.0),
+                ]);
+            } else if root == 11 {
+                // "South" pole (RI3H.ec:1848-1876, `0xe5ec` to `0xe680` and `0xf3b0`). The
+                // eC's `v.x - 0` is `v.x`.
+                let (x, y) = mv(-d3, d3);
+                v.extend([
+                    (x, y),
+                    (x - 1.0, y - 1.0),
+                    (x - 2.0, y - 2.0),
+                    (x - 3.0, y - 3.0),
+                    (x + 1.0, y + 1.0),
+                ]);
+            } else {
+                // Regular A (RI3H.ec:1877-1897, `0xee08` to `0xefc3` and `0xf225`): every
+                // corner but the last is brought forward.
+                v.push(mv(d3, -d3));
+                forward(&mut v);
+                v.push(mv(-d3, -d23));
+                forward(&mut v);
+                v.push(mv(-d23, -d3));
+                forward(&mut v);
+                v.push(mv(-d3, d3));
+                forward(&mut v);
+                v.push(mv(d3, d23));
+                forward(&mut v);
+                v.push(mv(d23, d3));
+            }
+        }
+        // Odd level, type B
+        1 => {
+            if root == 10 {
+                // "North" pole (RI3H.ec:1900-1922, `0xed20` to `0xedb0`). The eC's `v.x + 0`
+                // is `v.x`.
+                let (x, y) = mv(d23, 0.0);
+                v.extend([
+                    (x, y),
+                    (x + 1.0, y + 1.0),
+                    (x + 2.0, y + 2.0),
+                    (x + 3.0, y + 3.0),
+                    (x + 4.0, y + 4.0),
+                ]);
+            } else if root == 11 {
+                // "South" pole (RI3H.ec:1923-1945, `0xeff0` to `0xf08a`).
+                let (x, y) = mv(d3, d);
+                v.extend([
+                    (x, y),
+                    (x - 1.0, y - 1.0),
+                    (x - 2.0, y - 2.0),
+                    (x - 3.0, y - 3.0),
+                    (x - 4.0, y - 4.0),
+                ]);
+            } else {
+                // Regular B (RI3H.ec:1946-1988, `0xe854` to `0xe9c6`). Neither the fourth
+                // corner nor the last is brought forward: the eC has no test after the
+                // fourth (RI3H.ec:1967-1975), and the library none either (`0xe979` to
+                // `0xe98d`). With that test put in, no ring of some 87,000 zones a grid
+                // moves: the fourth corner did not fall before the layout at any of them.
+                v.push(mv(0.0, -d3));
+                forward(&mut v);
+                v.push(mv(-d3, -d3));
+                forward(&mut v);
+                v.push(mv(-d3, 0.0));
+                forward(&mut v);
+                v.push(mv(0.0, d3));
+                v.push(mv(d3, d3));
+                forward(&mut v);
+                v.push(mv(d3, 0.0));
+            }
+        }
+        // Odd level, type C (RI3H.ec:1990-1997, `0xeaa0` to `0xeb49`)
+        2 => v.extend([
+            mv(d3, d3),
+            mv(d23, d23),
+            mv(d, d23),
+            mv(d, d3),
+            mv(d23, 2e-11),
+            mv(d3, 2e-11),
+        ]),
+        // Odd level, type D (RI3H.ec:1998-2005, `0xe9d0` to `0xea7b`)
+        _ => v.extend([
+            mv(2e-11, d23),
+            mv(d3, d),
+            mv(d23, d),
+            mv(d23, d23),
+            mv(d3, d3),
+            mv(2e-11, d3),
+        ]),
+    }
+    Some(v)
 }
 
 /// The eight directions of `I3HNeighbor` (`RI3H.ec:841-852`), in the order in which
@@ -1219,6 +1374,156 @@ fn children(id: u64) -> Vec<u64> {
     children
 }
 
+/// A zone's level, `levelI9R * 2 + (subHex > 0)`, read from the fields of the identifier as
+/// they stand. Ports the `I3HZone` property `level` (`RI3H.ec:878-881`).
+fn level(id: u64) -> u64 {
+    let (level_i9r, _, _, sub_hex) = fields(id);
+    2 * level_i9r + u64::from(sub_hex > 0)
+}
+
+/// The zones two levels up that hold the whole of this one: one for a zone that lies wholly
+/// within a grandparent, three for one that three grandparents share. The entries are the
+/// eC's as they come, the null zone among them where a parent does not exist. Ports
+/// `I3HZone::getContainingGrandParents` (`RI3H.ec:1225-1245`).
+fn containing_grand_parents(id: u64) -> Vec<u64> {
+    let c_parent = centroid_parent(id);
+    if is_centroid_child(id) {
+        if c_parent != NULL_ZONE {
+            vec![parent0(c_parent)]
+        } else {
+            parents(parent0(id))
+        }
+    } else {
+        parents(c_parent)
+    }
+}
+
+/// The compaction of a set of zones: every grandparent whose grandchildren are all in the set
+/// stands for those of them that it alone holds, two levels a pass from the finest level of
+/// the set upwards, in ascending order of the identifiers. Ports
+/// `RhombicIcosahedral3H::compactZones` (`RI3H.ec:161-186`) with `compactI3HZones`
+/// (`RI3H.ec:2250-2386`), statement for statement; the eC's local names are kept.
+///
+/// The eC reads the array into a tree ordered by the identifier's value, so that a zone given
+/// twice counts once, and leaves the null zone out; `BTreeSet` is that tree. A grandparent is
+/// taken when the grandchild at its centre has every neighbour in the set, and when each of
+/// the six grandchildren on its vertices is in the set too or, failing that, has the zone two
+/// levels finer at its own centre already kept in the output. A zone leaves the set when
+/// every grandparent that holds it was taken, which is one for the seven about the centre and
+/// three for one on a vertex: so the six on the vertices of a lone grandparent stay beside
+/// it, and overlap it.
+///
+/// Three things in the eC look like oversights and are the engine's answer, so all are kept.
+/// The grandchild at the centre is not itself looked for, so that a set which lacks it and
+/// has its neighbours is compacted as if it had it, and the answer then covers a zone that
+/// the set did not hold. `output` is not emptied between passes. And the loop goes on after a
+/// pass that found nothing to take (the eC's `break` is commented out).
+///
+/// The answer covers a zone that the set did not hold by a second route as well, which is
+/// the rule as written and no oversight: from the second pass on, a grandchild on a vertex
+/// that the pass lacks is taken as present on the evidence of the one zone at its own centre,
+/// kept in the output, and the grandparent then covers the part of itself about that vertex
+/// whatever of it the set held.
+///
+/// The zones must be ones the engine's own parser reads back, which `Grid` checks first, and
+/// the function is meant for zones of one level, which `Grid` checks too: given zones of
+/// several levels the engine drops those with no grandparent to be dropped for, as this
+/// does. The cost is that of the set: at most seventeen passes, each a bounded amount of
+/// work for every zone it holds, and a search of a tree for each.
+fn compact(input: &[u64]) -> Vec<u64> {
+    use std::collections::BTreeSet;
+    let mut max_level = 0;
+    let mut zones: BTreeSet<u64> = BTreeSet::new();
+    for &zone in input {
+        if zone != NULL_ZONE {
+            max_level = max_level.max(level(zone) as i64);
+            zones.insert(zone);
+        }
+    }
+
+    let mut output: BTreeSet<u64> = BTreeSet::new();
+    let mut next: BTreeSet<u64> = BTreeSet::new();
+    let mut l = max_level - 2;
+    while l >= 0 {
+        for &zone in &zones {
+            for g_parent in containing_grand_parents(zone) {
+                // The eC tests the grandparent against the null zone alone. One value passes
+                // that test and is no zone: `parent0` of the null zone is the null zone with
+                // its sub-hex cleared, `0xffff_ffff_ffff_fffc`, which the grandparents of a
+                // zone of level 0 come to. The eC carries on with it, reads relations for it
+                // that mean nothing, and never keeps it; this crate's relations for it would
+                // be empty and would let it through, so it is refused here with every other
+                // identifier that is no zone. A set of one level never reaches it: a zone of
+                // level 0 is in the set of a pass only where the input holds a finer zone
+                // beside it.
+                if g_parent == NULL_ZONE || !is_readable(g_parent) || next.contains(&g_parent) {
+                    continue;
+                }
+                let c_zone = centroid_child(centroid_child(g_parent));
+                let mut parent_all_in = neighbors(c_zone)
+                    .into_iter()
+                    .all(|nb| nb == NULL_ZONE || zones.contains(&nb));
+                if parent_all_in {
+                    // Grandparent vertex children's centroid children are partially within it
+                    // and must be present to perform replacement (the eC's own note).
+                    for ch in children(g_parent).into_iter().skip(1) {
+                        if ch == NULL_ZONE {
+                            continue;
+                        }
+                        let c_child = centroid_child(ch);
+                        if !zones.contains(&c_child) {
+                            let (cx, cy) = centroid(c_child);
+                            let sub = from_centroid(level(c_child) as u32 + 2, cx, cy)
+                                .unwrap_or(NULL_ZONE);
+                            if !output.contains(&sub) {
+                                parent_all_in = false;
+                            }
+                        }
+                    }
+                    if parent_all_in {
+                        next.insert(g_parent);
+                    }
+                }
+            }
+        }
+
+        for &zone in &zones {
+            let all_in = containing_grand_parents(zone)
+                .iter()
+                .all(|g_parent| next.contains(g_parent));
+            if !all_in {
+                output.insert(zone);
+            }
+        }
+
+        if l - 2 >= 0 && !next.is_empty() {
+            // Not done: the next level becomes the zones to compact.
+            zones = std::mem::take(&mut next);
+        } else {
+            // Done: next is combined with output into the final zones.
+            zones = output.clone();
+            zones.extend(next.iter().copied());
+        }
+        l -= 2;
+    }
+
+    if zones.len() >= 32 && zones.first().is_some_and(|&zone| level(zone) == 1) {
+        let mut n_l1 = 0;
+        for &zone in &zones {
+            match level(zone) {
+                1 => n_l1 += 1,
+                0 => {}
+                _ => break,
+            }
+        }
+        if n_l1 == 32 {
+            // Simplifying the full globe to the zones of level 0.
+            zones = (0..12).map(|root| pack(0, root, 0, 0)).collect();
+        }
+    }
+    zones.into_iter().collect()
+}
+
 impl Topology for HexA3 {
     const APERTURE: u8 = 3;
 
@@ -1327,6 +1632,20 @@ impl Topology for HexA3 {
             ring[1..].reverse();
         }
         ring
+    }
+
+    /// The zone's refined boundary in the 5x6 plane, before any projection, as
+    /// `getRefinedVertices` builds it for WGS84 (`RI3H.ec:456`, `:507`): the corners of
+    /// `getBaseRefinedVertices` with `crs84` true, every side then divided into `n_divisions`
+    /// parts by `refine5x6` with `wrap` true. The points are in the engine's own sequence,
+    /// which runs anticlockwise; nothing is turned here, as [`HexA3::planar_vertices`] turns
+    /// the plain ring.
+    ///
+    /// `a` must satisfy [`HexA3::is_valid_address`]. `None`, which `Grid` gives as the empty
+    /// ring, is the eC's null array, for an identifier of a polar root with a non-zero index;
+    /// no valid address is one.
+    fn planar_refined_vertices(a: &Address, n_divisions: i32) -> Option<Vec<(f64, f64)>> {
+        Some(refine5x6(&base_refined_vertices(a.base)?, n_divisions))
     }
 
     /// The zone's neighbours, as the engine's `getZoneNeighbors` (`RI3H.ec:119-122`) lists them:
@@ -1453,14 +1772,14 @@ impl Topology for HexA3 {
     /// omits descendants: this order is the zone's descendants, each once, in the generator's
     /// own scanline order. Every other order is the engine's.
     ///
-    /// It also answers `None` above [`crate::grid::MAX_MATERIALISED_SUB_ZONES`], well below the
+    /// It also answers `None` above [`crate::grid::max_materialised_sub_zones`], well below the
     /// engine's own `2^28`: an `Address` costs about 32 bytes against a centroid's 16, and `Grid`
     /// already refuses a request above that cap before it ever calls here, so this only guards a
     /// caller that reaches this trait method directly, which would otherwise be free to
     /// materialise gigabytes of addresses.
     fn sub_zones(a: &Address, depth: u8) -> Option<Vec<Address>> {
         let count = hex_a3_subzones::count(a.base, depth)?;
-        if count > crate::grid::MAX_MATERIALISED_SUB_ZONES {
+        if count > crate::grid::max_materialised_sub_zones() {
             return None;
         }
         hex_a3_subzones::sub_zones(a.base, depth)
@@ -1482,6 +1801,86 @@ impl Topology for HexA3 {
     /// [`HexA3::first_sub_zone`].
     fn sub_zone_at_index(a: &Address, depth: u8, index: u64) -> Option<Address> {
         hex_a3_subzones::sub_zone_at_index(a.base, depth, index).map(|id| Address::new(id, &[]))
+    }
+
+    /// `3^(level / 2)` cells along a rhombus: the I9R grid of the even level at or below
+    /// `level`, whose index within a rhombus runs left to right and top to bottom
+    /// (`RI3H.ec:858-861`). Nought beyond resolution 33.
+    fn lattice_edge(level: u8) -> u64 {
+        if level > MAX_LEVEL {
+            return 0;
+        }
+        pow3(u64::from(level / 2))
+    }
+
+    /// The zones of one I9R cell: the cell's own zone at an even level, its sub-hexagons B, C
+    /// and D at an odd one, as `listZones` names them (`RI3H.ec:779-786`).
+    ///
+    /// The identifier is its own key. `listZones` sorts its answer (`RI3H.ec:824`) by
+    /// `I3HZone::OnCompare` (`RI3H.ec:865-876`), which compares the levels and then the values;
+    /// at one level the value reads, from its highest field down, the root rhombus, the index
+    /// `row * 3^(level / 2) + col` and the sub-hexagon, which is the walk rhombus by rhombus,
+    /// row by row and cell by cell, and the polar roots 10 and 11 after the ten rhombi.
+    fn cell_zones(level: u8, root: u8, row: u64, col: u64) -> Vec<(Address, u64)> {
+        let p = Self::lattice_edge(level);
+        if root > 9 || row >= p || col >= p {
+            return Vec::new();
+        }
+        let sub_hexes: &[u64] = if level % 2 == 0 { &[0] } else { &[1, 2, 3] };
+        sub_hexes
+            .iter()
+            .map(|&sub_hex| {
+                let id = pack(
+                    u64::from(level / 2),
+                    u64::from(root),
+                    row * p + col,
+                    sub_hex,
+                );
+                (Address::new(id, &[]), id)
+            })
+            .collect()
+    }
+
+    /// The one zone of a polar root: the polar pentagon itself at an even level, its
+    /// sub-hexagon B at an odd one, as `listZones` adds the two poles to every answer
+    /// (`RI3H.ec:795-799`). The engine reads the sub-hexagons C and D of a polar root from text
+    /// and lists neither; see [`HexA3::is_valid_address`].
+    fn polar_zones(level: u8, root: u8) -> Vec<(Address, u64)> {
+        if level > MAX_LEVEL || !(10..=11).contains(&root) {
+            return Vec::new();
+        }
+        let id = pack(
+            u64::from(level / 2),
+            u64::from(root),
+            0,
+            u64::from(level % 2),
+        );
+        vec![(Address::new(id, &[]), id)]
+    }
+
+    /// The root, and the row and the column that the index within the root holds as
+    /// `row * 3^levelI9R + col`, left to right and top to bottom (`RI3H.ec:858-861`). `None`
+    /// for an address that [`HexA3::is_valid_address`] refuses.
+    fn locate(a: &Address) -> Option<(u8, u64, u64, u64)> {
+        if !Self::is_valid_address(a) {
+            return None;
+        }
+        let (level_i9r, root, ix, _) = fields(a.base);
+        let p = pow3(level_i9r);
+        Some((root as u8, ix / p, ix % p, a.base))
+    }
+
+    /// DGGAL's compaction of a set of zones (`compactZones`, `RI3H.ec:161-186`), in ascending
+    /// order of the identifiers: see [`compact`]. Every address must satisfy
+    /// [`HexA3::is_valid_address`], which `Grid` checks first.
+    fn compact(zones: &[Address]) -> Option<Vec<Address>> {
+        let ids: Vec<u64> = zones.iter().map(|a| a.base).collect();
+        Some(
+            compact(&ids)
+                .into_iter()
+                .map(|id| Address::new(id, &[]))
+                .collect(),
+        )
     }
 }
 
@@ -2835,5 +3234,704 @@ mod tests {
         let start = std::time::Instant::now();
         assert_eq!(HexA3::sub_zones(&a, 14), None);
         assert!(start.elapsed() < std::time::Duration::from_millis(200));
+        // The topology reads the limit in force, which is the one that the grid reads: a
+        // list is given exactly where it is no longer than that limit, whatever the
+        // environment of the run has made of it.
+        let limit = crate::grid::max_materialised_sub_zones();
+        for depth in 1..=6 {
+            let count = hex_a3_subzones::count(a.base, depth).unwrap();
+            assert_eq!(
+                HexA3::sub_zones(&a, depth).is_some(),
+                count <= limit,
+                "depth {depth}"
+            );
+        }
+    }
+
+    // --- the refined boundary in the plane: the base vertices and `refine5x6` ---
+    //
+    // The engine has no planar accessor that honours the refinement on aperture 3
+    // (`RI3H.ec:656-663`), so the planar code is held to the engine through the ring: this
+    // crate's refined boundary in radians, as `Grid::refined_ring_radians` gives it, against
+    // the engine's `getZoneRefinedWGS84Vertices`.
+
+    /// This crate's refined boundary of the zone `id` in radians, a latitude and a longitude to
+    /// each point, with every edge divided into `n` parts, 0 for the engine's own choice.
+    fn ring<P: Projection>(grid: &Grid<P, HexA3, I3h>, id: u64, n: i32) -> Vec<(f64, f64)> {
+        let zone = ZoneId(id);
+        let a = grid.geometry_address(zone).expect("a zone with geometry");
+        grid.refined_ring_radians(zone, &a, n)
+    }
+
+    /// Where the ring `ours` leaves the engine's, as a sequence of doubles compared by their
+    /// bits: `None` where the two are the same.
+    fn ring_difference(ours: &[(f64, f64)], theirs: &[(f64, f64)]) -> Option<String> {
+        if ours.len() != theirs.len() {
+            return Some(format!(
+                "{} points, the engine has {}",
+                ours.len(),
+                theirs.len()
+            ));
+        }
+        ours.iter()
+            .zip(theirs)
+            .position(|(a, b)| bits2(*a) != bits2(*b))
+            .map(|i| {
+                format!(
+                    "point {i} of {} is {:?}, the engine has {:?}",
+                    ours.len(),
+                    ours[i],
+                    theirs[i]
+                )
+            })
+    }
+
+    fn bits2(p: (f64, f64)) -> (u64, u64) {
+        (p.0.to_bits(), p.1.to_bits())
+    }
+
+    /// One ring of the engine: `getZoneRefinedWGS84Vertices` of the zone on the grid named, at
+    /// the edge refinement given, read from DGGAL v0.0.6, BuildID
+    /// `e75d6ab18f8b460713ebcd21df6f07922fb909c3`: the bits of a latitude and of a longitude,
+    /// in radians, to each point.
+    struct EngineRing {
+        /// The arm of the base vertices, or the site of the compiled order, that the ring holds.
+        what: &'static str,
+        grid: &'static str,
+        text: &'static str,
+        id: u64,
+        refinement: i32,
+        ring: &'static [(u64, u64)],
+    }
+
+    /// One zone for each arm of `getBaseRefinedVertices`, with every edge in one part, so that
+    /// the ring is the arm's own corners and nothing else, save that a pentagon off the poles
+    /// has five of the arm's six; and one ring for each site of the compiled order that moves
+    /// a ring of the engine, at a zone and a refinement at which it does.
+    const ENGINE_RINGS: [EngineRing; 17] = [
+        EngineRing {
+            what: "the even level, the north polar pentagon",
+            grid: "ISEA3H",
+            text: "CA-0-A",
+            id: 0x0540_0000_0000_0000,
+            refinement: 1,
+            ring: &[
+                (0x3ff1_3e9c_b6b5_1637, 0x3fd2_6e77_0b7a_3a87),
+                (0x3ff1_3e9c_b6b5_1635, 0x3fba_5baf_5f18_eceb),
+                (0x3fef_c0c0_aeab_98df, 0x3fb0_d0aa_1998_1e44),
+                (0x3fee_3a73_d8f5_0744, 0x3fc9_0562_e340_75b8),
+                (0x3fef_c0c0_aeab_98dd, 0x3fd4_d138_5cda_6e31),
+            ],
+        },
+        EngineRing {
+            what: "the even level, the south polar pentagon",
+            grid: "ISEA3H",
+            text: "CB-0-A",
+            id: 0x0560_0000_0000_0000,
+            refinement: 1,
+            ring: &[
+                (0xbfef_c0c0_aeab_98de, 0xc008_9b76_0377_6c28),
+                (0xbff1_3e9c_b6b5_1637, 0xc008_4f1d_d94b_65b2),
+                (0xbff1_3e9c_b6b5_1637, 0xc006_d42c_72d4_e5c7),
+                (0xbfef_c0c0_aeab_98dd, 0xc006_87d4_48a8_df52),
+                (0xbfee_3a73_d8f5_0744, 0xc007_91a5_2610_25bd),
+            ],
+        },
+        EngineRing {
+            what: "the even level, a hexagon of the regular arm",
+            grid: "ISEA3H",
+            text: "C8-2C-A",
+            id: 0x0500_0000_0000_00b0,
+            refinement: 1,
+            ring: &[
+                (0x3ff7_7b67_4a6f_9f04, 0x3ff1_b3e1_5e5f_519c),
+                (0x3ff6_5655_4405_5fc0, 0x3ff6_497f_8070_ac89),
+                (0x3ff5_e45f_d6bc_f93a, 0x3ffc_42a7_b0ac_3bae),
+                (0x3ff6_5655_4405_5fc4, 0x4001_1de7_f073_e572),
+                (0x3ff7_7b67_4a6f_9f0b, 0x4003_68b7_017c_92d7),
+                (0x3ff8_7b1d_1ab4_ece5, 0x3ffc_42a7_b0ac_3b28),
+            ],
+        },
+        EngineRing {
+            what: "the even level, a pentagon of the regular arm",
+            grid: "ISEA3H",
+            text: "C0-0-A",
+            id: 0x0400_0000_0000_0000,
+            refinement: 1,
+            ring: &[
+                (0x3ff1_3e9c_b6b5_1644, 0xc008_4f1d_d94b_65b3),
+                (0x3fef_c0c0_aeab_98f8, 0xc008_9b76_0377_6c28),
+                (0x3fee_3a73_d8f5_0760, 0xc007_91a5_2610_25bc),
+                (0x3fef_c0c0_aeab_98fa, 0xc006_87d4_48a8_df51),
+                (0x3ff1_3e9c_b6b5_1643, 0xc006_d42c_72d4_e5c7),
+            ],
+        },
+        EngineRing {
+            what: "the odd level, the north polar pentagon",
+            grid: "ISEA3H",
+            text: "CA-0-B",
+            id: 0x0540_0000_0000_0001,
+            refinement: 1,
+            ring: &[
+                (0x3ff0_ef07_32f4_e64e, 0x3fc9_0562_e340_75b6),
+                (0x3ff0_7b93_03b5_e3f3, 0x3fbf_89ef_34ad_96be),
+                (0x3fef_96b7_3b98_1826, 0x3fc3_aedc_79c5_1bc9),
+                (0x3fef_96b7_3b98_1826, 0x3fce_5be9_4cbb_cfa4),
+                (0x3ff0_7b93_03b5_e3f3, 0x3fd1_22e7_1615_1012),
+            ],
+        },
+        EngineRing {
+            what: "the odd level, the south polar pentagon",
+            grid: "ISEA3H",
+            text: "CB-0-B",
+            id: 0x0560_0000_0000_0001,
+            refinement: 1,
+            ring: &[
+                (0xbfef_96b7_3b98_1817, 0xc007_3c3c_bf78_701f),
+                (0xbfef_96b7_3b98_1822, 0xc007_e70d_8ca7_db62),
+                (0xbff0_7b93_03b5_e3f8, 0xc008_25ab_da9e_c062),
+                (0xbff0_ef07_32f4_e650, 0xc007_91a5_2610_25b8),
+                (0xbff0_7b93_03b5_e3ef, 0xc006_fd9e_7181_8b14),
+            ],
+        },
+        EngineRing {
+            what: "the odd level, a hexagon of the regular arm of sub-hex B",
+            grid: "ISEA3H",
+            text: "C8-2C-B",
+            id: 0x0500_0000_0000_00b1,
+            refinement: 1,
+            ring: &[
+                (0x3ff7_112c_5bcf_3468, 0x3ff6_e9e5_e83e_f64a),
+                (0x3ff6_839c_6e4c_20ad, 0x3ffa_2ce7_035c_b43e),
+                (0x3ff6_839c_6e4c_20ae, 0x3ffe_5868_5dfb_c324),
+                (0x3ff7_112c_5bcf_346b, 0x4000_cdb4_bc8c_c083),
+                (0x3ff7_c9b4_4b0e_777f, 0x4000_28d0_992d_7d03),
+                (0x3ff7_c9b4_4b0e_777c, 0x3ff8_33ae_2efd_7d24),
+            ],
+        },
+        EngineRing {
+            what: "the odd level, a pentagon of the regular arm of sub-hex B",
+            grid: "ISEA3H",
+            text: "C0-0-B",
+            id: 0x0400_0000_0000_0001,
+            refinement: 1,
+            ring: &[
+                (0x3ff0_ef07_32f4_e65e, 0xc007_91a5_2610_25bc),
+                (0x3ff0_7b93_03b5_e400, 0xc008_25ab_da9e_c05e),
+                (0x3fef_96b7_3b98_1841, 0xc007_e70d_8ca7_db5c),
+                (0x3fef_96b7_3b98_1841, 0xc007_3c3c_bf78_701d),
+                (0x3ff0_7b93_03b5_e400, 0xc006_fd9e_7181_8b18),
+            ],
+        },
+        EngineRing {
+            what: "the odd level, sub-hex C",
+            grid: "ISEA3H",
+            text: "C0-3-C",
+            id: 0x0400_0000_0000_000e,
+            refinement: 1,
+            ring: &[
+                (0x3ff6_5f1d_1465_e233, 0xc005_a31f_8db4_50cd),
+                (0x3ff6_6f6c_c10c_e110, 0xc003_7dd4_36cc_39be),
+                (0x3ff6_ffd5_e013_a8a4, 0xc002_48d5_918f_c5e5),
+                (0x3ff7_a36f_f83a_2508, 0xc003_f202_5958_2138),
+                (0x3ff7_75b5_09ff_b676, 0xc007_91a5_2608_df40),
+                (0x3ff6_cae3_8238_c55b, 0xc007_91a5_260a_ec81),
+            ],
+        },
+        EngineRing {
+            what: "the odd level, sub-hex D",
+            grid: "ISEA3H",
+            text: "C5-1B-D",
+            id: 0x04a0_0000_0000_006f,
+            refinement: 1,
+            ring: &[
+                (0xbff7_75b5_09ff_b674, 0x3fc9_0562_e3b4_dd68),
+                (0xbff7_a36f_f83a_2507, 0x3fe4_bfe3_ebb0_2f7c),
+                (0xbff6_ffd5_e013_a8a3, 0x3feb_6497_0ad1_9cb8),
+                (0xbff6_6f6c_c10c_e10f, 0x3fe6_909c_75df_cd55),
+                (0xbff6_5f1d_1465_e232, 0x3fdb_f6de_347e_e25e),
+                (0xbff6_cae3_8238_c55b, 0x3fc9_0562_e394_0960),
+            ],
+        },
+        EngineRing {
+            what: "GB3-1",
+            grid: "ISEA3H",
+            text: "H0-CB5-A",
+            id: 0x0e00_0000_0000_32d4,
+            refinement: 0,
+            ring: &[
+                (0x3ff8_e7c1_0a87_e675, 0xc007_613e_813a_dad0),
+                (0x3ff8_e78b_b3eb_4f4b, 0xc007_663d_822e_7b95),
+                (0x3ff8_e756_46c5_0757, 0xc007_6b33_6bf2_6913),
+                (0x3ff8_e720_c352_9e3e, 0xc007_7020_5383_6df5),
+                (0x3ff8_e6eb_29d0_ddf3, 0xc007_7504_4dad_8f65),
+                (0x3ff8_e6b5_7a7b_cd4e, 0xc007_79df_6f0c_4291),
+                (0x3ff8_e67e_ccba_c9e0, 0xc007_7538_72d5_7965),
+                (0x3ff8_e648_0aeb_d1eb, 0xc007_7099_fe68_4e6c),
+                (0x3ff8_e611_3545_b174, 0xc007_6c03_fd75_ba78),
+                (0x3ff8_e5da_4bfe_805c, 0xc007_6776_5be2_7387),
+                (0x3ff8_e5a3_4f4b_a4e9, 0xc007_62f1_05c6_8c96),
+                (0x3ff8_e5a1_7261_8660, 0xc007_599b_0661_5af5),
+                (0x3ff8_e59f_434c_93dd, 0xc007_5045_ab02_f73a),
+                (0x3ff8_e59c_c216_1c2c, 0xc007_46f1_0d00_1613),
+                (0x3ff8_e599_eec8_bbc7, 0xc007_3d9d_45a1_5c34),
+                (0x3ff8_e596_c970_5bfd, 0xc007_344a_6e21_c538),
+                (0x3ff8_e5cb_3897_cda3, 0xc007_2f49_31d1_5275),
+                (0x3ff8_e5ff_901f_56c3, 0xc007_2a3f_38ad_3946),
+                (0x3ff8_e633_cfc8_baad, 0xc007_252c_6fc0_353d),
+                (0x3ff8_e667_f754_fed7, 0xc007_2010_c3ee_b4b5),
+                (0x3ff8_e69c_0684_6891, 0xc007_1aec_21f6_d828),
+                (0x3ff8_e6d4_2db5_b6c6, 0xc007_1f40_ceb3_b6f0),
+                (0x3ff8_e70c_435b_9dd0, 0xc007_239d_bb99_57a8),
+                (0x3ff8_e744_4744_0889, 0xc007_2802_fdac_2a82),
+                (0x3ff8_e77c_393c_31fa, 0xc007_2c70_aa2c_fa80),
+                (0x3ff8_e7b4_1910_a2a0, 0xc007_30e6_d699_86ec),
+                (0x3ff8_e7b7_59df_b8c1, 0xc007_3a90_1ccb_f214),
+                (0x3ff8_e7ba_45ac_767c, 0xc007_443a_6d0d_c888),
+                (0x3ff8_e7bc_dc69_a9ef, 0xc007_4de5_ab4e_7c42),
+                (0x3ff8_e7bf_1e0b_936b, 0xc007_5791_bb6d_3bd5),
+            ],
+        },
+        EngineRing {
+            what: "GB3-2",
+            grid: "IVEA3H",
+            text: "I0-0-A",
+            id: 0x1000_0000_0000_0000,
+            refinement: 1,
+            ring: &[
+                (0x3ff0_4f0e_e947_864e, 0xc007_91de_692f_c837),
+                (0x3ff0_4e9c_a08b_4e49, 0xc007_9201_c8d5_0d5a),
+                (0x3ff0_4e56_0175_86f4, 0xc007_91a5_2610_25bb),
+                (0x3ff0_4e9c_a08b_4e44, 0xc007_9148_834b_3e18),
+                (0x3ff0_4f0e_e947_8652, 0xc007_916b_e2f0_833f),
+            ],
+        },
+        EngineRing {
+            what: "R56-1 and R56-5",
+            grid: "ISEA3H",
+            text: "G2-256-B",
+            id: 0x0c40_0000_0000_0959,
+            refinement: 2,
+            ring: &[
+                (0x3ff0_cb4e_caf7_c3dc, 0xbfc6_e7c1_ac76_959f),
+                (0x3ff0_cb4c_8862_89ab, 0xbfc6_f840_9df1_c21d),
+                (0x3ff0_cb4a_286a_0939, 0xbfc7_08bf_b707_d074),
+                (0x3ff0_ca37_b8a9_1f15, 0xbfc7_10e6_9456_cfe2),
+                (0x3ff0_c925_4761_3910, 0xbfc7_190b_b78c_1edb),
+                (0x3ff0_c815_590d_b238, 0xbfc7_1094_8bc9_4b29),
+                (0x3ff0_c705_5d04_639a, 0xbfc7_081f_7ca9_2fae),
+                (0x3ff0_c707_af89_49df, 0xbfc6_f7a8_03b9_8ac8),
+                (0x3ff0_c709_e4b6_2b76, 0xbfc6_e730_b286_8f86),
+                (0x3ff0_c81c_2f14_c032, 0xbfc6_df28_291a_f48f),
+                (0x3ff0_c92e_72b5_3806, 0xbfc6_d71d_989d_672f),
+                (0x3ff0_ca3e_a2d0_8e98, 0xbfc6_df6e_c147_4696),
+            ],
+        },
+        EngineRing {
+            what: "R56-4 and R56-8",
+            grid: "ISEA3H",
+            text: "G3-63D89-B",
+            id: 0x0c60_0000_0018_f625,
+            refinement: 3,
+            ring: &[
+                (0xbff0_bbd9_b328_2e36, 0xc003_aae5_1504_2ad8),
+                (0xbff0_bb2f_cd3e_f6cf, 0xc003_ab51_aae3_acd4),
+                (0xbff0_ba85_e076_d5c1, 0xc003_abbe_3134_0b2e),
+                (0xbff0_b9db_eccf_77ee, 0xc003_ac2a_a7f6_fdf5),
+                (0xbff0_b9ee_928b_84ea, 0xc003_acd9_f45e_3445),
+                (0xbff0_ba01_2b21_a85e, 0xc003_ad89_4263_9ab4),
+                (0xbff0_ba13_b691_c7db, 0xc003_ae38_9205_24a0),
+                (0xbff0_bad0_4dd0_b2a9, 0xc003_ae7b_9f81_1b06),
+                (0xbff0_bb8c_e3af_ecda, 0xc003_aebe_b894_bf42),
+                (0xbff0_bc49_782f_15b1, 0xc003_af01_dd43_29e7),
+                (0xbff0_bcf3_f0fd_4fbe, 0xc003_ae99_1dad_c719),
+                (0xbff0_bd9e_64b4_5f10, 0xc003_ae30_501f_b1ca),
+                (0xbff0_be48_d353_79e7, 0xc003_adc7_7495_daa0),
+                (0xbff0_be36_3899_b9a7, 0xc003_ad17_d70f_d7ba),
+                (0xbff0_be23_90b5_48c5, 0xc003_ac68_3b2a_4b63),
+                (0xbff0_be10_dba6_4224, 0xc003_abb8_a0e7_44ab),
+                (0xbff0_bd53_ce8c_9ec3, 0xc003_ab72_1227_09cc),
+                (0xbff0_bc96_c10d_7dbc, 0xc003_ab2b_8e31_1dd7),
+            ],
+        },
+        EngineRing {
+            what: "R56-15",
+            grid: "RTEA3H",
+            text: "J2-4ADF-A",
+            id: 0x1240_0000_0001_2b7c,
+            refinement: 2,
+            ring: &[
+                (0x3ff0_71a3_69ef_54f9, 0x3fc2_0c1c_e738_217d),
+                (0x3ff0_71b0_7477_44f8, 0x3fc2_0b7c_d8c5_520c),
+                (0x3ff0_71bd_7ef7_36aa, 0x3fc2_0adc_c872_d702),
+                (0x3ff0_71b8_6913_2c0d, 0x3fc2_09bc_428b_07be),
+                (0x3ff0_71b3_5309_4e2a, 0x3fc2_089b_bd99_cc11),
+                (0x3ff0_71a1_329a_686b, 0x3fc2_081b_4c3b_da6c),
+                (0x3ff0_718d_5e84_ca9b, 0x3fc2_07fa_d629_6e41),
+                (0x3ff0_717f_7a6e_202c, 0x3fc2_08ca_e23d_d14c),
+                (0x3ff0_7171_9648_1ee0, 0x3fc2_099a_ebdb_1807),
+                (0x3ff0_7177_860f_287a, 0x3fc2_0a8b_6f2d_7303),
+                (0x3ff0_717d_75bc_107b, 0x3fc2_0b7b_f364_3434),
+                (0x3ff0_7191_49bc_1880, 0x3fc2_0b9c_702d_d455),
+            ],
+        },
+        EngineRing {
+            what: "R56-17",
+            grid: "IVEA3H",
+            text: "G3-673A4-A",
+            id: 0x0c60_0000_0019_ce90,
+            refinement: 2,
+            ring: &[
+                (0xbff0_c6d2_868f_486d, 0xc004_1352_97a0_a0fc),
+                (0xbff0_c4b1_10f3_f8c7, 0xc004_1374_733e_22b1),
+                (0xbff0_c28f_9dea_903d, 0xc004_1396_796c_8179),
+                (0xbff0_c197_388c_53e1, 0xc004_1531_0f56_af1d),
+                (0xbff0_c09e_89ac_cd96, 0xc004_16cb_5bef_b2a1),
+                (0xbff0_c1c7_19ec_e3c6, 0xc004_1844_26c0_5a53),
+                (0xbff0_c2ef_71a5_ef42, 0xc004_19bd_5c10_4a0e),
+                (0xbff0_c511_0699_575a, 0xc004_199c_bebe_3f53),
+                (0xbff0_c732_9e0a_67f8, 0xc004_197c_4d34_1c9f),
+                (0xbff0_c82b_c34d_e41b, 0xc004_17e1_8152_ebc2),
+                (0xbff0_c924_9eef_4ef9, 0xc004_1646_6b52_322f),
+                (0xbff0_c7fb_af1d_b0dd, 0xc004_14cc_4bb5_0654),
+            ],
+        },
+        EngineRing {
+            what: "AIP-3, the points of a plain edge, at a pentagon at three parts to an edge",
+            grid: "IVEA3H",
+            text: "A1-0-B",
+            id: 0x0020_0000_0000_0001,
+            refinement: 3,
+            ring: &[
+                (0x3fd6_580c_33af_b5a0, 0xc004_15a5_3e7f_3b0f),
+                (0x3fcf_4727_39e5_831a, 0xc004_e292_a35d_2443),
+                (0x3fc0_25db_d921_d615, 0xc005_8c1a_ad13_3672),
+                (0x3cdb_1666_a542_2886, 0xc006_1250_a972_e75a),
+                (0xbfc0_25db_d921_d594, 0xc005_8c1a_ad13_3672),
+                (0xbfcf_4727_39e5_82b6, 0xc004_e292_a35d_2443),
+                (0xbfd6_580c_33af_b56b, 0xc004_15a5_3e7f_3b10),
+                (0xbfd4_d229_7274_ecd9, 0xc002_e6d1_9fa2_6ffc),
+                (0xbfd1_d984_48fa_1a14, 0xc001_c473_693e_59b5),
+                (0xbfcb_4691_d7dc_6051, 0xc000_bb74_c86b_ae1f),
+                (0xbfb2_6523_4fb6_6b8e, 0xc000_9977_f0d8_0da8),
+                (0x3fb2_6523_4fb6_6c20, 0xc000_9977_f0d8_0da8),
+                (0x3fcb_4691_d7dc_6097, 0xc000_bb74_c86b_ae1d),
+                (0x3fd1_d984_48fa_1a3c, 0xc001_c473_693e_59b3),
+                (0x3fd4_d229_7274_ed06, 0xc002_e6d1_9fa2_6ffa),
+            ],
+        },
+    ];
+
+    /// The base vertices and `refine5x6` against rings read from the engine, without DGGAL.
+    ///
+    /// The first ten rings hold the eight arms of `getBaseRefinedVertices`, the two regular
+    /// arms each at a hexagon and at a pentagon. The next six pin the eight sites of the
+    /// planar code whose order moves a ring: put back alone in the eC's order, GB3-1 moves the
+    /// ring named for it here, and so do GB3-2, R56-15 and R56-17 theirs; R56-1 and R56-5 each
+    /// move the one ring named for both, and R56-4 and R56-8 likewise. Each was so put back,
+    /// and this test seen to fail at its ring. The last, a pentagon of IVEA3H at three parts to
+    /// an edge, gives site AIP-3 of `addIntermediatePoints` a literal ring of the engine on
+    /// aperture 3: with that site put back in the eC's order alone, it fails here.
+    #[test]
+    fn the_base_vertices_and_refine5x6_follow_the_compiled_order() {
+        let mut differences: Vec<String> = Vec::new();
+        for engine in &ENGINE_RINGS {
+            assert_eq!(I3h::to_text(ZoneId(engine.id)), engine.text);
+            let ours = match engine.grid {
+                "ISEA3H" => ring(crate::registry::isea3h(), engine.id, engine.refinement),
+                "IVEA3H" => ring(crate::registry::ivea3h(), engine.id, engine.refinement),
+                "RTEA3H" => ring(crate::registry::rtea3h(), engine.id, engine.refinement),
+                other => panic!("no grid {other}"),
+            };
+            let theirs: Vec<(f64, f64)> = engine
+                .ring
+                .iter()
+                .map(|&(lat, lon)| (f64::from_bits(lat), f64::from_bits(lon)))
+                .collect();
+            if let Some(difference) = ring_difference(&ours, &theirs) {
+                differences.push(format!(
+                    "{}: {} {} at a refinement of {}: {difference}",
+                    engine.what, engine.grid, engine.text, engine.refinement
+                ));
+            }
+        }
+        assert!(
+            differences.is_empty(),
+            "{} rings leave the engine's:\n{}",
+            differences.len(),
+            differences.join("\n")
+        );
+    }
+
+    /// The refinements at which the ring is compared with the engine's: the automatic one, and
+    /// those at which each site was found to move a ring.
+    #[cfg(feature = "oracle")]
+    const REFINEMENTS: [i32; 5] = [0, 1, 2, 3, 7];
+
+    /// The pinning zones on aperture 3, by the site of the planar code each
+    /// pins: reverted alone to the eC's order, the site moves the ring of each of its zones,
+    /// on one of the three grids at least, at some refinement of `REFINEMENTS`. A zone that
+    /// pins a site on one grid need not pin it on another, since the projection decides the
+    /// last bits; every zone is compared on the three. The last entry holds one zone for each
+    /// arm of the base vertices.
+    #[cfg(feature = "oracle")]
+    const PINNED_ZONES: [(&str, &[u64]); 7] = [
+        // `d/3` as `d * fl(1/3)`: `H0-CB5-A`, `H0-CB5-C`, `G0-4A7-B`, `G0-446-B`, `I0-2656-A`,
+        // `G0-4A8-B`, `G1-1BF16-B`, `G1-76000-B` and `G0-446-A`.
+        (
+            "GB3-1",
+            &[
+                0x0e00_0000_0000_32d4,
+                0x0e00_0000_0000_32d6,
+                0x0c00_0000_0000_129d,
+                0x0c00_0000_0000_1119,
+                0x1000_0000_0000_9958,
+                0x0c00_0000_0000_12a1,
+                0x0c20_0000_0006_fc59,
+                0x0c20_0000_001d_8001,
+                0x0c00_0000_0000_1118,
+            ],
+        ),
+        // `2*d/3` as `d * fl(2/3)`: `G0-7C95E-A`, `H0-CD1-A`, `I0-0-A`, `K0-0-A`, `G1-1C7A0-C`,
+        // `G0-0-A`, `G0-163-D` and `H0-0-A`.
+        (
+            "GB3-2",
+            &[
+                0x0c00_0000_001f_2578,
+                0x0e00_0000_0000_3344,
+                0x1000_0000_0000_0000,
+                0x1400_0000_0000_0000,
+                0x0c20_0000_0007_1e82,
+                0x0c00_0000_0000_0000,
+                0x0c00_0000_0000_058f,
+                0x0e00_0000_0000_0000,
+            ],
+        ),
+        // The early crossing at a top dent, of `p` to the right and of `next`: `G2-256-B`,
+        // `G2-2A0-B`, `G2-2B3-B`, `G2-258-B`, `G2-26A-B`, `G2-2B4-B`, `G2-224-B`, `G2-26D-B`
+        // and `G2-27F-B`. Each zone pins both sites.
+        (
+            "R56-1 and R56-5",
+            &[
+                0x0c40_0000_0000_0959,
+                0x0c40_0000_0000_0a81,
+                0x0c40_0000_0000_0acd,
+                0x0c40_0000_0000_0961,
+                0x0c40_0000_0000_09a9,
+                0x0c40_0000_0000_0ad1,
+                0x0c40_0000_0000_0891,
+                0x0c40_0000_0000_09b5,
+                0x0c40_0000_0000_09fd,
+            ],
+        ),
+        // The early crossing at a bottom dent, of `p` to the right and of `next`: `G3-63D89-B`,
+        // `G3-779A0-B`, `G3-7E5D6-B`, `G3-6433B-B`, `G3-7B294-B`, `G3-61884-B`, `G3-6B523-B`
+        // and `G3-6E865-B`. Each zone pins both sites.
+        (
+            "R56-4 and R56-8",
+            &[
+                0x0c60_0000_0018_f625,
+                0x0c60_0000_001d_e681,
+                0x0c60_0000_001f_9759,
+                0x0c60_0000_0019_0ced,
+                0x0c60_0000_001e_ca51,
+                0x0c60_0000_0018_6211,
+                0x0c60_0000_001a_d48d,
+                0x0c60_0000_001b_a195,
+            ],
+        ),
+        // The second point of an interruption at a top dent crossed to the right: `J2-4ADF-A`,
+        // `P2-D53574-A`, `J2-40FF-A`, `J2-3B63-A`, `J2-3D53-A`, `J2-4326-A`, `J2-39D3-A`,
+        // `J2-3DAE-A` and `J2-3F9A-A`.
+        (
+            "R56-15",
+            &[
+                0x1240_0000_0001_2b7c,
+                0x1e40_0000_0354_d5d0,
+                0x1240_0000_0001_03fc,
+                0x1240_0000_0000_ed8c,
+                0x1240_0000_0000_f54c,
+                0x1240_0000_0001_0c98,
+                0x1240_0000_0000_e74c,
+                0x1240_0000_0000_f6b8,
+                0x1240_0000_0000_fe68,
+            ],
+        ),
+        // The second point of an interruption at a bottom dent crossed to the right:
+        // `G3-673A4-A`, `G3-6A6E6-A`, `G3-6DA28-A`, `F3-72DB-A`, `G3-6AC98-A`, `G3-6DFDA-A`,
+        // `G3-64E9F-A` and `G3-681E1-A`.
+        (
+            "R56-17",
+            &[
+                0x0c60_0000_0019_ce90,
+                0x0c60_0000_001a_9b98,
+                0x0c60_0000_001b_68a0,
+                0x0a60_0000_0001_cb6c,
+                0x0c60_0000_001a_b260,
+                0x0c60_0000_001b_7f68,
+                0x0c60_0000_0019_3a7c,
+                0x0c60_0000_001a_0784,
+            ],
+        ),
+        // The even level: `CA-0-A` and `CB-0-A`, the polar pentagons; `C8-2C-A`, a hexagon, and
+        // `C0-0-A`, a pentagon, both of the regular arm. The odd level: `CA-0-B` and `CB-0-B`;
+        // `C8-2C-B` and `C0-0-B`, of the regular arm of sub-hex B; `C0-3-C` and `C5-1B-D`.
+        (
+            "an arm of the base vertices",
+            &[
+                0x0540_0000_0000_0000,
+                0x0560_0000_0000_0000,
+                0x0500_0000_0000_00b0,
+                0x0400_0000_0000_0000,
+                0x0540_0000_0000_0001,
+                0x0560_0000_0000_0001,
+                0x0500_0000_0000_00b1,
+                0x0400_0000_0000_0001,
+                0x0400_0000_0000_000e,
+                0x04a0_0000_0000_006f,
+            ],
+        ),
+    ];
+
+    /// Each compiled-order site of the planar code, at the zones that pin it, and each arm of
+    /// the base vertices, against the engine's ring on the three grids. Every difference is
+    /// gathered before the test fails, so that a site put back in the eC's order names its
+    /// zones in the failure.
+    #[test]
+    #[cfg(feature = "oracle")]
+    fn the_compiled_order_sites_hold_at_the_zones_that_pin_them() {
+        fn on<P: Projection>(
+            oracle: &str,
+            grid: &Grid<P, HexA3, I3h>,
+            differences: &mut Vec<String>,
+        ) {
+            for (site, zones) in PINNED_ZONES {
+                for &id in zones {
+                    let text = dggal_oracle::text_id(oracle, id);
+                    assert_eq!(grid.text_id(ZoneId(id)), text);
+                    for n in REFINEMENTS {
+                        let theirs = dggal_oracle::refined_vertices(oracle, id, n);
+                        if let Some(difference) = ring_difference(&ring(grid, id, n), &theirs) {
+                            differences.push(format!(
+                                "{site}: {oracle} {text} ({id:#018x}) at a refinement of {n}: \
+                                 {difference}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut differences: Vec<String> = Vec::new();
+        on(
+            dggal_oracle::ISEA3H,
+            crate::registry::isea3h(),
+            &mut differences,
+        );
+        on(
+            dggal_oracle::IVEA3H,
+            crate::registry::ivea3h(),
+            &mut differences,
+        );
+        on(
+            dggal_oracle::RTEA3H,
+            crate::registry::rtea3h(),
+            &mut differences,
+        );
+        assert!(
+            differences.is_empty(),
+            "{} rings leave the engine's:\n{}",
+            differences.len(),
+            differences.join("\n")
+        );
+    }
+
+    fn ids(texts: &str) -> Vec<u64> {
+        texts
+            .split_whitespace()
+            .map(|text| I3h::from_text(text).unwrap().0)
+            .collect()
+    }
+
+    fn texts(ids: &[u64]) -> String {
+        let texts: Vec<String> = ids.iter().map(|&id| I3h::to_text(ZoneId(id))).collect();
+        texts.join(" ")
+    }
+
+    /// The zones two levels up that hold the whole of a zone, on ISEA3H as the engine
+    /// answers: one for each of the seven sub-zones about the centre of `B4-2-A`, that zone
+    /// itself, and three for each of the six on its vertices, that zone among them. A zone of
+    /// level 1 on a vertex has none, and a zone of level 0 has the parents of the null zone,
+    /// whose first is the null zone with its sub-hex cleared and is no zone.
+    #[test]
+    fn the_grand_parents_that_hold_a_zone_are_one_or_three() {
+        let parent = ids("B4-2-A")[0];
+        let (mut within, mut on_a_vertex) = (0, 0);
+        for sub in hex_a3_subzones::sub_zones(parent, 2).unwrap() {
+            let holders = containing_grand_parents(sub);
+            match holders.len() {
+                1 => {
+                    assert_eq!(holders, [parent]);
+                    within += 1;
+                }
+                3 => {
+                    assert!(holders.contains(&parent), "{}", texts(&holders));
+                    assert!(holders.iter().all(|&g| is_readable(g) && level(g) == 2));
+                    on_a_vertex += 1;
+                }
+                n => panic!("{n} zones hold {}", texts(&[sub])),
+            }
+        }
+        assert_eq!((within, on_a_vertex), (7, 6));
+        let of_level_2 = containing_grand_parents(parent);
+        assert!(of_level_2.len() == 1 && is_readable(of_level_2[0]) && level(of_level_2[0]) == 0);
+        assert!(containing_grand_parents(ids("A2-0-C")[0]).is_empty());
+        let of_level_0 = containing_grand_parents(ids("A0-0-A")[0]);
+        assert_eq!(of_level_0[0], 0xffff_ffff_ffff_fffc);
+        assert!(of_level_0.iter().all(|&g| !is_readable(g)));
+    }
+
+    /// The compaction of sets of more than one level, which `Grid` refuses and the engine
+    /// answers so: a zone with no zone two levels up to give way to is lost as soon as the
+    /// set holds a finer zone, and a zone of level 0 beside a finer one is kept, the
+    /// identifier that its grandparents come to, which is no zone, never entering the answer.
+    /// The null zone is left out, and a zone given twice counts once.
+    ///
+    /// The last set shows that the loop goes on after a pass that takes nothing: the six
+    /// zones of level 4 about the centre of `B4-2-A`, with the zone of level 6 at the centre
+    /// of each of the six of level 4 on its vertices. The first pass, from level 6, takes
+    /// nothing; the second takes `B4-2-A`, on the evidence of those six zones of level 6, kept
+    /// by the first. Were the loop left at the first pass, the answer would be the twelve.
+    #[test]
+    fn the_compaction_of_several_levels_is_the_engines() {
+        for (set, answer) in [
+            ("A2-0-C C4-22-B", "C4-22-B"),
+            ("A2-0-C B4-2-A", "B4-2-A"),
+            ("B5-0-A A9-0-C A0-0-B A3-0-A", "A0-0-B A3-0-A B5-0-A"),
+            ("A0-0-A B4-2-A", "A0-0-A B4-2-A"),
+            ("A5-0-A A0-0-B", "A0-0-B A5-0-A"),
+            (
+                "C2-1A-A C2-23-A C4-5-A C4-7-A C4-F-A C4-10-A D2-69-A D2-B7-A D2-15C-A D4-60-A \
+                 D4-69-A D4-B7-A",
+                "B4-2-A C2-1A-A C2-23-A C4-5-A C4-7-A C4-F-A C4-10-A D2-69-A D2-B7-A D2-15C-A \
+                 D4-60-A D4-69-A D4-B7-A",
+            ),
+        ] {
+            assert_eq!(texts(&compact(&ids(set))), answer, "{set}");
+        }
+        // Every zone of level 2 with every zone of level 0: the twelve of level 0, as the
+        // engine answers, and not a thirteenth that is no zone, the null zone with its
+        // sub-hex cleared, which the grandparents of a zone of level 0 come to.
+        let twelve: Vec<u64> = (0..12).map(|root| pack(0, root, 0, 0)).collect();
+        let mut set: Vec<u64> = crate::isea3h().zones(2).unwrap().map(|z| z.0).collect();
+        assert_eq!(set.len(), 92);
+        set.extend(&twelve);
+        assert_eq!(compact(&set), twelve);
+
+        let mut set = ids("A0-0-A B4-2-A A0-0-A");
+        set.insert(1, NULL_ZONE);
+        assert_eq!(texts(&compact(&set)), "A0-0-A B4-2-A");
+        assert!(compact(&[NULL_ZONE]).is_empty());
+        assert!(compact(&[]).is_empty());
     }
 }

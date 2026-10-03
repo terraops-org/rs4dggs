@@ -429,6 +429,7 @@ pub const EDGE_ZONES: [&str; 4] = ["K5-67E99A74-D", "K5-89336A36-D", "K5-8855C3D
 /// generators' skip without the order being built, against the engine's own index of each,
 /// whose search costs as much as the index and so stays cheap.
 pub fn sub_zones_and_paging_match_the_engine<S: Aperture3>() {
+    the_limit_on_a_list_of_sub_zones_is_its_ceiling();
     let g = S::grid();
     let m = measured::<S>();
     // The deep sample, the same on every grid: 716 depths from its twenty-two zones.
@@ -916,6 +917,7 @@ pub fn phantom_polar_texts_are_refused<S: Aperture3>() {
 /// - Two different zones at one level, a zone and each of its neighbours: `None` here, where
 ///   the engine answers 0, having compared the two levels only, as on aperture 7.
 pub fn sub_zone_answers_depart_from_the_engine_as_recorded<S: Aperture3>() {
+    the_limit_on_a_list_of_sub_zones_is_its_ceiling();
     let g = S::grid();
     let zones: Vec<ZoneId> = zones::<S>()
         .into_iter()

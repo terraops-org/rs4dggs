@@ -191,20 +191,21 @@ pub fn card(grid: &AnyGrid, id: ZoneId) -> Card {
             .into_iter()
             .map(|p| Named {
                 text: grid.text_id(p),
-                // As DGGAL marks it, a lone parent included; on aperture 7 every congruent zone
-                // is its parent's centroid child, so no parent is singled out.
-                mark: facts(grid).aperture == 3 && Some(p) == centroid_parent,
+                // The parent that is itself a centroid child, a lone parent included. On the
+                // aperture-3 grids `dgg` marks the same one; on the aperture-7 grids it marks
+                // none, since DGGAL answers no centroid parent there, and the library's is marked.
+                mark: Some(p) == centroid_parent,
             })
             .collect(),
-        // On aperture 7 every child is its parent's centroid child (one parent each); the centre
-        // is the first, whose digit is 0. On aperture 3 the library says which child is.
+        // The child at the zone's centre: a centroid child whose parent is the zone. Along the
+        // two broken seams of the aperture-7 grids a child may be the centroid child of another
+        // zone, and is not marked, as `dgg` does not mark it.
         children: grid
             .children(id)
             .into_iter()
-            .enumerate()
-            .map(|(i, c)| Named {
+            .map(|c| Named {
                 text: grid.text_id(c),
-                mark: grid.is_centroid_child(c) && (facts(grid).aperture == 3 || i == 0),
+                mark: grid.is_centroid_child(c) && grid.parent(c) == Some(id),
             })
             .collect(),
         neighbours: grid
@@ -223,16 +224,26 @@ fn refusal(grid: &AnyGrid, e: Error) -> Failure {
         Error::ResolutionOutOfRange { res, max } => {
             format!("resolution {res} is beyond {name}'s finest, {max}")
         }
-        Error::NoSubZoneOrder => format!(
-            "{name} has no sub-zone order: its grids implement the congruent Z7 hierarchy, over \
-             which none is defined yet"
-        ),
+        // No grid of the library answers this today: all six order their sub-zones.
+        Error::NoSubZoneOrder => format!("{name} has no sub-zone order"),
         Error::TooManySubZones { count, limit } => format!(
             "{count} sub-zones are more than the limit of {limit}; ask for a smaller -depth, or \
              for one sub-zone by its index"
         ),
         e => e.to_string(),
     })
+}
+
+/// What the text output prints in place of a zone where the grid has none: the null zone.
+const NO_CELL: &str = "(no cell)";
+
+/// The text of a zone, or [`NO_CELL`] for the null zone, which names no cell.
+fn text_or_no_cell(grid: &AnyGrid, id: ZoneId) -> String {
+    if id == ZoneId::NULL {
+        NO_CELL.to_string()
+    } else {
+        grid.text_id(id)
+    }
 }
 
 fn zone_arg(grid: &AnyGrid, s: &str) -> Result<ZoneId, Failure> {
@@ -558,14 +569,7 @@ fn write_answer(
                     None => {
                         let rows: Vec<(u8, String)> = rows
                             .into_iter()
-                            .map(|(r, id)| {
-                                let t = if id == ZoneId::NULL {
-                                    "(no cell)".to_string()
-                                } else {
-                                    grid.text_id(id)
-                                };
-                                (r, t)
-                            })
+                            .map(|(r, id)| (r, text_or_no_cell(grid, id)))
                             .collect();
                         text::zones_at(out, name, (lat, lon), &rows, precision)?;
                     }
@@ -719,7 +723,7 @@ fn other(grid: &AnyGrid, inv: &Invocation, out: &mut dyn Write) -> Result<(), Fa
                 if grid.is_sibling_of(ia, ib) {
                     lines.push(format!("{ta} and {tb} are siblings"));
                 }
-                // Only aperture 3 has a sub-zone order; on aperture 7 the library refuses, and
+                // Where the library refuses the index, the order being longer than it lists,
                 // nothing is said.
                 if ancestor {
                     if let Ok(Some(i)) = grid.sub_zone_index(ia, ib) {
@@ -751,10 +755,11 @@ fn other(grid: &AnyGrid, inv: &Invocation, out: &mut dyn Write) -> Result<(), Fa
                     let s = grid
                         .sub_zone_at_index(id, depth, *i)
                         .map_err(|e| refusal(grid, e))?;
+                    // A position of an order may hold the null zone, as DGGAL's own does.
                     writeln!(
                         out,
                         "sub-zone {i} of {t} at depth {depth}: {}",
-                        grid.text_id(s)
+                        text_or_no_cell(grid, s)
                     )?;
                 }
                 None => {
@@ -768,7 +773,7 @@ fn other(grid: &AnyGrid, inv: &Invocation, out: &mut dyn Write) -> Result<(), Fa
                         }
                     )?;
                     for (i, s) in subs.into_iter().enumerate() {
-                        writeln!(out, "{i:>7}  {}", grid.text_id(s))?;
+                        writeln!(out, "{i:>7}  {}", text_or_no_cell(grid, s))?;
                     }
                 }
             }
@@ -781,7 +786,9 @@ fn other(grid: &AnyGrid, inv: &Invocation, out: &mut dyn Write) -> Result<(), Fa
                     let depth = grid.resolution(is).saturating_sub(grid.resolution(ip));
                     writeln!(out, "{ts} is sub-zone {i} of {tp}, at depth {depth}")?;
                 }
-                None => writeln!(out, "{ts} is not a sub-zone of {tp}")?,
+                // No more is said than the library knows: along the two broken seams of the
+                // aperture-7 grids an order may hold a zone to which it gives no index.
+                None => writeln!(out, "{ts} has no index among the sub-zones of {tp}")?,
             }
         }
         _ => unreachable!("answered by `answer`"),

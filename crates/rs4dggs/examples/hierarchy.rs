@@ -1,4 +1,6 @@
-//! Walk the Z7 hierarchy of a zone: its ancestors up to the base cell, and its children.
+//! Walk the hierarchy of a zone of IGEO7: its primary parents up to the base cell, where the
+//! engine names them, each an ancestor, and its children. A zone that is no centroid child
+//! has a second parent, which this walk does not follow.
 //!
 //! ```text
 //! cargo run --example hierarchy -- [<zone id>]    (default: 0064156, Lisbon at resolution 5)

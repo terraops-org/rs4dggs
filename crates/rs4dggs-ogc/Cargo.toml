@@ -1,0 +1,26 @@
+[package]
+name = "rs4dggs-ogc"
+description = "The encodings of OGC API - DGGS over rs4dggs: zone lists, DGGS-JSON, DGGS-UBJSON, GeoJSON and the definitions of six DGGAL grids"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["dggs", "ogc", "geojson", "ubjson", "geospatial"]
+categories = ["science::geo", "encoding"]
+
+[lints]
+workspace = true
+
+[dependencies]
+rs4dggs = { path = "../rs4dggs", version = "0.1.0" }
+
+[features]
+# Compiles the tests that compare the encodings with DGGAL's own `dgg`; nothing else.
+oracle = []
+
+[[test]]
+name = "oracle_dgg"
+required-features = ["oracle"]

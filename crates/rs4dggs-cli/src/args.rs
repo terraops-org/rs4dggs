@@ -87,6 +87,16 @@ fn sample(grid: &AnyGrid) -> (&'static str, &'static str) {
     }
 }
 
+/// A zone of `grid`, a depth, an index and the sub-zone at that index of the zone's order at
+/// that depth, for the examples of `sub` and `index`.
+fn sub_sample(grid: &AnyGrid) -> (&'static str, u8, u64, &'static str) {
+    if facts(grid).aperture == 7 {
+        ("0064156", 2, 27, "006415600")
+    } else {
+        ("A4-0-A", 3, 8, "B2-5-C")
+    }
+}
+
 pub fn parse(args: &[String]) -> Result<Invocation, Failure> {
     let mut options = Options::default();
     let mut words: Vec<&str> = Vec::new();
@@ -208,13 +218,8 @@ pub fn parse(args: &[String]) -> Result<Invocation, Failure> {
     })?;
     let rest = &words[2.min(words.len())..];
     let (z1, z2) = sample(&grid);
+    let (sz, sdepth, _, ssub) = sub_sample(&grid);
     let g = words[0];
-    // The aperture-3 grids alone have sub-zone orders, so their examples name one.
-    let g3 = if facts(&grid).aperture == 3 {
-        g
-    } else {
-        "isea3h"
-    };
     let arg = |i: usize, example: String| -> Result<String, Failure> {
         rest.get(i)
             .map(|w| w.to_string())
@@ -295,7 +300,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, Failure> {
             Command::Rel(arg(0, e.clone())?, arg(1, e)?)
         }
         Some("sub") => {
-            let e = format!("rs4dggs {g3} sub A4-0-A -depth 2");
+            let e = format!("rs4dggs {g} sub {sz} -depth {sdepth}");
             at_most(2, e.clone())?;
             let zone = arg(0, e)?;
             let index = match rest.get(1) {
@@ -315,7 +320,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, Failure> {
                         .into(),
                 );
             }
-            let e = format!("rs4dggs {g3} index A4-0-A B2-5-C");
+            let e = format!("rs4dggs {g} index {sz} {ssub}");
             at_most(2, e.clone())?;
             Command::Index {
                 parent: arg(0, e.clone())?,
@@ -358,8 +363,8 @@ Commands:
   neighbours <zone>      a zone's neighbours
   disk <zone> <k>        every zone within k steps, ring by ring
   rel <zone> <zone>      how two zones are related
-  sub <zone> [index]     the sub-zones at -depth (aperture 3), or the one at that index
-  index <zone> <zone>    the index of a sub-zone within a zone (aperture 3)
+  sub <zone> [index]     the sub-zones at -depth, in DGGAL's order, or the one at that index
+  index <zone> <zone>    the index of a sub-zone within a zone
 
 Options:
   -f, --format text|csv|geojson   the output format
@@ -385,10 +390,12 @@ Examples:
 pub fn command_help(command: &str, grid: &AnyGrid) -> Option<String> {
     let g = grid.name().to_ascii_lowercase();
     let (z1, z2) = sample(grid);
-    let g3 = if facts(grid).aperture == 3 {
-        g.as_str()
+    let (sz, sdepth, sindex, ssub) = sub_sample(grid);
+    // What DGGAL's hierarchy is on the grids of this aperture.
+    let (parents, children) = if facts(grid).aperture == 7 {
+        ("one parent or two", "thirteen children (eleven")
     } else {
-        "isea3h"
+        ("one parent or three", "seven children (six")
     };
     // A head and its description, and a second line of the description under the first.
     let two =
@@ -398,9 +405,10 @@ pub fn command_help(command: &str, grid: &AnyGrid) -> Option<String> {
             "rs4dggs {g} info             the grid: aperture, resolutions, projection, indexing\n\
              rs4dggs {g} info <zone>      a zone's card\n\n\
              The card gives the zone's text and 64-bit identifiers, its resolution and shape, its\n\
-             centroid, its parents and children, its neighbours and its vertices. On the\n\
-             aperture-7 grids the parents and children are the congruent Z7 hierarchy's (one\n\
-             parent, seven children), where DGGAL's own `dgg` gives its geometric hierarchy.\n\n\
+             centroid, its parents and children, its neighbours and its vertices.\n\n\
+             The parents and children are DGGAL's own: on this grid a zone has {parents}, and\n\
+             {children} under a pentagon, none at the finest resolution). The parent that\n\
+             is itself a centroid child is marked, and so is the child at the zone's centre.\n\n\
              With `-` for the zone, one is read per line from standard input; a first line that\n\
              does not parse and holds a letter is taken as a header and skipped.\n\n\
              Examples:\n  rs4dggs {g} info {z1}\n  rs4dggs {g} info {z1} -f geojson\n  \
@@ -447,17 +455,18 @@ pub fn command_help(command: &str, grid: &AnyGrid) -> Option<String> {
             "rs4dggs {g} sub <zone> [-depth n]     the sub-zones n resolutions below (default 1), \
              in order\n\
              rs4dggs {g} sub <zone> <index> [-depth n]   the one at that index\n\n\
-             Aperture 3 only: the aperture-7 grids implement the congruent Z7 hierarchy, over \
-             which no\nsub-zone order is defined yet.\n\n\
-             Examples:\n  rs4dggs {g3} sub A4-0-A -depth 3\n  \
-             rs4dggs {g3} sub A4-0-A 8 -depth 3\n"
+             The order is DGGAL's own. A position printed as (no cell) is one at which the grid\n\
+             names no zone. A list longer than the library's limit is refused; one sub-zone by\n\
+             its index is answered at any depth.\n\n\
+             Examples:\n  rs4dggs {g} sub {sz} -depth {sdepth}\n  \
+             rs4dggs {g} sub {sz} {sindex} -depth {sdepth}\n"
         ),
         "index" => format!(
-            "{}\nExample:\n  rs4dggs {g3} index A4-0-A B2-5-C\n",
+            "{}\nExample:\n  rs4dggs {g} index {sz} {ssub}\n",
             two(
                 format!("rs4dggs {g} index <zone> <sub-zone>   "),
                 "the sub-zone's index within the zone, at the depth",
-                "their resolutions set (aperture 3 only)"
+                "their resolutions set"
             )
         ),
         _ => return None,

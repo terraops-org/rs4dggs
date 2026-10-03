@@ -9,10 +9,15 @@
 //! every request on a single worker thread, so a nested call would wait for itself.
 #![allow(dead_code)]
 pub mod aperture3;
+pub mod boxes;
 pub mod expected_divergences;
+pub mod facts;
+pub mod geometry;
+pub mod sub_zone_order;
 pub mod subject;
 pub mod suite;
 pub mod unresolved;
+pub mod zones;
 
 /// The whole oracle suite for one grid: one `#[test]` for each test of [`suite`] that
 /// applies to the grid's aperture, each a call to it for the subject given, a type
@@ -33,17 +38,46 @@ macro_rules! oracle_suite {
             deep_polar_digit_paths_answer_as_the_engine,
             neighbours_as_the_engine_lists_them,
             neighbours_near_the_poles_and_along_the_seams,
-            the_text_route_reads_digit_paths_as_the_hierarchy,
-            congruent_hierarchy_via_text_ids,
-            ancestry_and_siblings_via_text_ids,
+            parents_and_children_as_the_engine_lists_them,
+            the_hierarchy_at_seam_identifiers_built_by_text,
+            the_hierarchy_does_not_panic_on_hostile_input,
             disk_is_composed_neighbours,
             any_grid_answers_as_the_typed_grid_and_the_engine,
-            sub_zone_methods_refuse_on_aperture_7,
+            sub_zones_at_depth_1_as_the_engine_lists_them,
             the_null_zone_matches_dggal_but_for_its_resolution,
             level_20_null_geometry_matches_dggal,
             refusals_depart_from_the_engine_as_recorded,
             listed_divergences_still_hold_with_their_evidence,
             quantize_matches_dggal_at_every_resolution,
+        );
+        crate::common::oracle_tests!($subject; sub_zone_order:
+            sub_zone_orders_of_the_hexagons_as_the_engine_lists_them,
+            sub_zone_orders_of_the_pentagons_as_the_engine_lists_them,
+            deep_sub_zone_orders_as_the_engine_lists_them,
+            sub_zone_orders_at_seam_identifiers_built_by_text,
+            first_sub_zone_at_depth_0_departs_from_the_engine_as_recorded,
+            the_sub_zone_methods_do_not_panic_on_hostile_input,
+        );
+        crate::common::oracle_tests!($subject; facts:
+            the_area_of_every_sampled_zone_is_the_engines,
+            an_identifier_with_no_cell_has_no_area,
+            identifiers_the_engine_cannot_read_or_cannot_draw_have_the_areas_decided,
+            the_grid_facts_are_the_engines,
+            the_levels_from_an_area_are_the_engines,
+        );
+        crate::common::oracle_tests!($subject; geometry:
+            the_refined_boundary_and_the_extent_are_the_engines,
+            the_finest_refinements_are_the_engines,
+            the_new_methods_do_not_panic_on_hostile_input,
+        );
+        crate::common::oracle_tests!($subject; zones:
+            the_zones_of_a_box_are_the_engines_and_those_it_leaves_out,
+            the_boxes_known_by_name_depart_from_the_engine_as_recorded,
+            at_a_level_taken_whole_the_zones_of_a_box_are_those_of_the_rule,
+            the_margin_of_the_test_of_two_extents_is_the_librarys,
+            the_estimate_of_a_large_box_is_not_under_its_count,
+            the_compaction_on_the_sample_is_the_engines,
+            the_enumerations_the_estimate_and_the_compaction_withstand_hostile_input,
         );
     };
     ($subject:ty, aperture 3) => {
@@ -71,6 +105,26 @@ macro_rules! oracle_suite {
             phantom_polar_texts_are_refused,
             sub_zone_answers_depart_from_the_engine_as_recorded,
             non_finite_coordinates_are_refused,
+        );
+        crate::common::oracle_tests!($subject; facts:
+            the_area_of_every_sampled_zone_is_the_engines,
+            an_identifier_with_no_cell_has_no_area,
+            the_grid_facts_are_the_engines,
+            the_levels_from_an_area_are_the_engines,
+        );
+        crate::common::oracle_tests!($subject; geometry:
+            the_refined_boundary_and_the_extent_are_the_engines,
+            the_finest_refinements_are_the_engines,
+            the_new_methods_do_not_panic_on_hostile_input,
+        );
+        crate::common::oracle_tests!($subject; zones:
+            the_zones_of_a_box_are_the_engines_and_those_it_leaves_out,
+            the_boxes_known_by_name_depart_from_the_engine_as_recorded,
+            at_a_level_taken_whole_the_zones_of_a_box_are_those_of_the_rule,
+            the_margin_of_the_test_of_two_extents_is_the_librarys,
+            the_estimate_of_a_large_box_is_not_under_its_count,
+            the_compaction_on_the_sample_is_the_engines,
+            the_enumerations_the_estimate_and_the_compaction_withstand_hostile_input,
         );
     };
 }
@@ -117,6 +171,17 @@ impl Rng {
     pub fn unit(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
     }
+}
+
+/// Holds a test that builds lists of sub-zones to the limit under its ceiling: with the limit
+/// lowered by the environment, a list that the suites need would be refused.
+pub fn the_limit_on_a_list_of_sub_zones_is_its_ceiling() {
+    assert_eq!(
+        rs4dggs::grid::max_materialised_sub_zones(),
+        rs4dggs::grid::MAX_MATERIALISED_SUB_ZONES,
+        "the limit on a list of sub-zones is lowered: unset \
+         RS4DGGS_MAX_MATERIALISED_SUB_ZONES to run the suites"
+    );
 }
 
 /// Uniform points on the sphere, as (latitude, longitude) in degrees. Trigonometry in a

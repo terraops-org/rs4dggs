@@ -3,9 +3,9 @@
 use std::io::{self, Write};
 
 use rs4dggs::{AnyGrid, ZoneId};
+use rs4dggs_ogc::geometry::{Shape, clean};
 
 use crate::commands::coord;
-use crate::rings::{Shape, clean};
 
 pub struct Collection<'a> {
     out: &'a mut dyn Write,

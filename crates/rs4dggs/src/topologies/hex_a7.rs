@@ -4,8 +4,9 @@
 //! `(x, y)` in DGGAL's oblique 5x6 grid into a Z7 address (base cell plus direction
 //! digits), rebuilds planar cell geometry (a centroid and five or six vertices)
 //! from that address, and lists a zone's neighbours as the engine finds them, in the
-//! same plane. The geographic lift belongs to the `Grid`, so this module stays
-//! independent of any particular projection above the shared 5x6 layout.
+//! same plane; the sibling module `hex_a7_subzones` orders its sub-zones. The geographic
+//! lift belongs to the `Grid`, so this module stays independent of any particular
+//! projection above the shared 5x6 layout.
 //!
 //! Provenance, cited inline against these sources:
 //!   - `dggrs/RI7H.ec`: the I7H zone, the `fromCentroid` quantisation, the
@@ -79,6 +80,13 @@
 //!   `get_vertices`, where the compiler cancelled the centroid out of the first
 //!   direction, moved the whole number of each fan step inside the bracket and
 //!   removed a pair of opposite rotations;
+//! - the refined boundary of a polar pentagon, in `polar_pentagon_sides`, where the compiler
+//!   moved the whole number of each turn about the pole inside the bracket, as in the outline
+//!   above but not at every turn, and folded what it could of the two points of each
+//!   interruption. Seven of its sites move a ring and are pinned by rings read from the engine;
+//!   the others give the source's own doubles at every level, and a test records both. The
+//!   walker of every other zone, `add_non_polar_vertices_refined`, serves the refined boundary
+//!   too: the eC has it twice, and the library performs both copies in the same order;
 //! - the centroid, in `zone_centroid`, where the divisions by seven became
 //!   multiplications by the rounded reciprocal;
 //! - the neighbour search, in `get_neighbors`, where the compiler formed each of the three
@@ -87,7 +95,10 @@
 //!
 //! Everywhere else in this module the eC's source text still decides.
 
-use crate::fivebysix::{Crossing, cvtt_i32, move5x6_vertex, move5x6_vertex2, sgn};
+use super::hex_a7_subzones;
+use crate::fivebysix::{
+    Crossing, add_intermediate_points, cvtt_i32, move5x6_vertex, move5x6_vertex2, sgn,
+};
 use crate::interfaces::Topology;
 use crate::math;
 use crate::types::{Address, PlanarPoint};
@@ -124,7 +135,7 @@ const POW7: [i64; 11] = [
 /// level is 19. The constant is kept here rather than taken from the indexing: it
 /// is a property of the Z7 to 7H *geometry* conversion, which is this module's
 /// concern. See [`HexA7::is_null_geometry`].
-const NULL_GEOMETRY_LEVEL: usize = 20;
+pub(super) const NULL_GEOMETRY_LEVEL: usize = 20;
 
 // --------------------------------------------------------------------------- //
 // Rounding and power helpers
@@ -155,7 +166,7 @@ fn jsround(x: f64) -> i64 {
 ///
 /// The eC's `POW7` (`RI7H.ec:34`) reads the same powers from `powersOf7` (`RI7H.ec:837-841`),
 /// a longer table, and past its end adds `POW_EPSILON` to `pow(7, x)` rather than rounding.
-fn pow7(n: i64) -> i64 {
+pub(super) fn pow7(n: i64) -> i64 {
     if (n as usize) < POW7.len() {
         POW7[n as usize]
     } else {
@@ -208,12 +219,12 @@ fn pymin(a: f64, b: f64) -> f64 {
 /// child selector, zero at an even level. The Z7 level is
 /// `2 * l49r + (sub_hex > 0)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Z {
-    l49r: i64,
-    root: i64,
+pub(super) struct Z {
+    pub(super) l49r: i64,
+    pub(super) root: i64,
     row: i64,
     col: i64,
-    sub_hex: i64,
+    pub(super) sub_hex: i64,
 }
 
 impl Z {
@@ -231,13 +242,13 @@ impl Z {
 
 /// The zone's Z7 level: two levels per aperture-49 step, plus one for a non-zero
 /// sub-hex. Ports the `level` property (`RI7H.ec:889-892`).
-fn zone_level(z: &Z) -> i64 {
+pub(super) fn zone_level(z: &Z) -> i64 {
     2 * z.l49r + i64::from(z.sub_hex > 0)
 }
 
 /// The number of cell vertices: five for the rhombus-corner pentagon, six
 /// otherwise. Ports the `nPoints` property (`RI7H.ec:894-904`).
-fn zone_npoints(z: &Z) -> i64 {
+pub(super) fn zone_npoints(z: &Z) -> i64 {
     if z.sub_hex > 1 {
         return 6;
     }
@@ -422,7 +433,7 @@ fn tie_break_side_is_negative(px: f64, py: f64, ax: f64, ay: f64, bx: f64, by: f
 /// Rotates a 5x6 offset vector by sixty degrees. The oblique basis makes a sixty
 /// degree turn a pure integer combination of the two components. Ports
 /// `rotate5x6Offset` (`RI7H.ec:1933-1947`).
-fn rotate5x6_offset(dx: f64, dy: f64, clockwise: bool) -> (f64, f64) {
+pub(super) fn rotate5x6_offset(dx: f64, dy: f64, clockwise: bool) -> (f64, f64) {
     if clockwise {
         (dx - dy, dx) // 60 degrees clockwise
     } else {
@@ -582,11 +593,11 @@ fn crosses5x6_interruption_v2(c_in_x: f64, c_in_y: f64, dx: f64, dy: f64) -> Opt
 const ONE_SEVENTH: f64 = 1.0 / 7.0;
 const TWO_SEVENTHS: f64 = 2.0 / 7.0;
 
-const EVEN_HEX_A: f64 = 7.0 / 3.0;
-const EVEN_HEX_B: f64 = 14.0 / 3.0;
-const ODD_HEX_A: f64 = 4.0 / 3.0;
-const ODD_HEX_B: f64 = 5.0 / 3.0;
-const ODD_HEX_C: f64 = 1.0 / 3.0;
+pub(super) const EVEN_HEX_A: f64 = 7.0 / 3.0;
+pub(super) const EVEN_HEX_B: f64 = 14.0 / 3.0;
+pub(super) const ODD_HEX_A: f64 = 4.0 / 3.0;
+pub(super) const ODD_HEX_B: f64 = 5.0 / 3.0;
+pub(super) const ODD_HEX_C: f64 = 1.0 / 3.0;
 
 const EVEN_HEX_VERTS: [(f64, f64); 6] = [
     (-EVEN_HEX_A, -EVEN_HEX_B),
@@ -615,7 +626,7 @@ const ODD_HEX_VERTS: [(f64, f64); 6] = [
 /// offsets, re-expressed across an interruption through [`move5x6_vertex`]. An edge
 /// hexagon and the south-pole corner rotate the sub-hexagon index first, matching
 /// the children enumeration.
-fn zone_centroid(z: &Z) -> (f64, f64) {
+pub(super) fn zone_centroid(z: &Z) -> (f64, f64) {
     let l49r = z.l49r;
     let p = pow7(l49r);
     let oop = 1.0 / p as f64;
@@ -909,11 +920,31 @@ fn base_refined_vertices(z: &Z, oonp: f64) -> Vec<(f64, f64)> {
     }
     // Odd level, every other zone (RI7H.ec:2482-2494).
     let v = scale_offsets(&ODD_HEX_VERTS, oonp);
-    add_non_polar_vertices_refined(z, centroid5x6(z), &v)
+    add_non_polar_vertices_refined(z, centroid5x6(z), &v, Emission::NoAlloc)
 }
 
-/// Traces a non-polar cell's boundary for `containsPoint`, porting
-/// `addNonPolarVerticesRefinedNoAlloc` (RI7H.ec:2094) at `nDivisions` one.
+/// What the walker of a zone's boundary, [`add_non_polar_vertices_refined`], adds for each side
+/// it walks. The eC has the walker twice, and the two copies differ in this alone:
+/// `addNonPolarVerticesRefinedNoAlloc` (`RI7H.ec:2094-2165`) hands each side to
+/// `addIntermediatePointsNoAlloc` (`ri5x6.ec:728-791`), and `addNonPolarVerticesRefined`
+/// (`RI7H.ec:2021-2092`) to `addIntermediatePoints` (`ri5x6.ec:651-726`).
+#[derive(Clone, Copy)]
+enum Emission {
+    /// The copy `containsPoint` runs, at `nDivisions` one and `crs84` false, where
+    /// `addIntermediatePointsNoAlloc` writes the side's first point and, where the side crosses
+    /// an interruption, the two points of the crossing (`ri5x6.ec:758-765`). It has no pole
+    /// rule on this path: its flag is raised under `crs84` alone (`ri5x6.ec:732`).
+    NoAlloc,
+    /// The copy the refined boundary runs: each side divided by
+    /// [`add_intermediate_points`], which has the pole rule whatever `crs84` is.
+    Refined { crs84: bool, n_divisions: i32 },
+}
+
+/// Traces a non-polar cell's boundary side by side, for `containsPoint` and for the refined
+/// boundary: it ports both `addNonPolarVerticesRefinedNoAlloc` (RI7H.ec:2094), at
+/// `nDivisions` one, and `addNonPolarVerticesRefined` (`RI7H.ec:2021-2092`), which the eC
+/// writes with the same text and the library performs in the same order, as the comments below
+/// show for each copy. What each adds for a side is the `emission`.
 ///
 /// This is deliberately a second tracer beside [`add_non_polar_base_vertices`],
 /// because the eC keeps two: `getVertices` emits one point per side, whereas this
@@ -923,7 +954,12 @@ fn base_refined_vertices(z: &Z, oonp: f64) -> Vec<(f64, f64)> {
 /// lying on a seam therefore carries more vertices here than in its published
 /// geometry, and the containment test needs them: without the pair the polygon
 /// short-circuits across the interruption.
-fn add_non_polar_vertices_refined(z: &Z, c: (f64, f64), v: &[(f64, f64); 6]) -> Vec<(f64, f64)> {
+fn add_non_polar_vertices_refined(
+    z: &Z,
+    c: (f64, f64),
+    v: &[(f64, f64); 6],
+    emission: Emission,
+) -> Vec<(f64, f64)> {
     let n_points = zone_npoints(z);
     let (cx, cy) = c;
     // faithful: as in [`add_non_polar_base_vertices`], and for the same reason.
@@ -944,6 +980,20 @@ fn add_non_polar_vertices_refined(z: &Z, c: (f64, f64), v: &[(f64, f64); 6]) -> 
     //
     // This is the walker whose result `containsPoint` actually tests, so it is the
     // one that decides the quantiser's answers on a boundary.
+    //
+    // faithful: `addNonPolarVerticesRefined` (RI7H.ec:2021-2092), the allocating copy, is
+    // unguarded as well and compiled on its own, at `0x28cc0` to `0x2920f` in the same library,
+    // with the same head (RI7H.ec:2030-2041):
+    //
+    // ```text
+    //   28d0a  addsd  xmm7,xmm4        ; xmm7 = 1e-11 + c.x, hoisted
+    //   28d35  addsd  xmm3,xmm2        ; t.y  = c.y + v[i].y
+    //   28d39  addsd  xmm1,xmm7        ; v[i].x + (c.x + 1e-11)
+    //   28d97  addsd  xmm6,xmm2        ; point.y = c.y + v[start].y
+    //   28d9f  addsd  xmm4,xmm5        ; point.x = c.x + v[start].x
+    //   28dab  subsd  xmm5,[rsi]       ; dir.x = v[start].x - v[prev].x
+    //   28dc1  subsd  xmm2,[rsi+0x8]   ; dir.y = v[start].y - v[prev].y
+    // ```
     let cx_eps = cx + 1e-11;
     let mut start: usize = 0;
     for (i, vi) in v.iter().enumerate() {
@@ -960,10 +1010,13 @@ fn add_non_polar_vertices_refined(z: &Z, c: (f64, f64), v: &[(f64, f64); 6]) -> 
     let prev = (start + 5) % 6;
     let mut direction = (v[start].0 - v[prev].0, v[start].1 - v[prev].1);
 
-    // Sized once, as the eC's buffer is fixed (`Pointd v5x6[24]` in `containsPoint`,
+    // Sized once. For `containsPoint` the eC's buffer is fixed (`Pointd v5x6[24]`,
     // RI7H.ec:955): three points a side at most, the start and the two interruption
-    // points.
-    let mut out: Vec<(f64, f64)> = Vec::with_capacity(3 * n_points as usize);
+    // points. For the refined boundary, see [`refined_capacity`].
+    let mut out: Vec<(f64, f64)> = Vec::with_capacity(match emission {
+        Emission::NoAlloc => 3 * n_points as usize,
+        Emission::Refined { n_divisions, .. } => refined_capacity(n_divisions),
+    });
     for _ in 0..n_points {
         let ndir = rotate5x6_offset(direction.0, direction.1, false); // 60 anticlockwise
         let mut n = (point.0 + ndir.0, point.1 + ndir.1);
@@ -1032,6 +1085,27 @@ fn add_non_polar_vertices_refined(z: &Z, c: (f64, f64), v: &[(f64, f64); 6]) -> 
             //
             // Unlike the other walker, the two `n = i2 + d` sums keep the eC's own
             // bracketing here, so only `ddx`, `ddy` and the second rotation move.
+            //
+            // faithful: the allocating copy (RI7H.ec:2077-2079) is compiled to the same forms,
+            // at `0x28cc0`:
+            //
+            // ```text
+            //   28f13  subsd  xmm5,xmm6    ; point.x - i1.x
+            //   28f24  subsd  xmm3,xmm4    ; point.y - i1.y
+            //   28f35  addpd  xmm4,xmm7    ; ddx = (point.x - i1.x) + ndir.x, in the high half
+            //   28f39  addsd  xmm9,xmm1    ; ddy = (point.y - i1.y) + ndir.y
+            //   -- crossingLeft false, the clockwise arm --
+            //   28f52  addsd  xmm0,xmm4    ; n.y = i2.y + ddx
+            //   28f56  subsd  xmm3,xmm9    ; d.x = ddx - ddy
+            //   28f5b  addsd  xmm3,xmm8    ; n.x = d.x + i2.x
+            //   (dir is written nowhere on this arm: `[rsp]` and `[rsp+0x8]` keep the old pair)
+            //   -- crossingLeft true, the anticlockwise arm --
+            //   29131  addpd  xmm2,xmm3    ; d.x = ndir.y + (point.y - i1.y), in the low half
+            //   29135  subpd  xmm3,xmm4    ; d.y = ddy - ddx, in the high half
+            //   29142  movsd  [rsp],xmm1   ; dir.x := ndir.y
+            //   29147  xorpd  xmm2,...     ; dir.y := -dir.x
+            //   2914f  addpd  xmm3,xmm0    ; n = i2 + d
+            // ```
             let ddx = (point.0 - i1.0) + ndir.0;
             let ddy = (point.1 - i1.1) + ndir.1;
             if crossing_left {
@@ -1041,19 +1115,360 @@ fn add_non_polar_vertices_refined(z: &Z, c: (f64, f64), v: &[(f64, f64); 6]) -> 
                 n = ((ddx - ddy) + i2.0, ddx + i2.1);
                 // `direction` is deliberately left as it was: see above.
             }
-            // `addIntermediatePointsNoAlloc(.., point, n, 1, i1, i2, false)`.
-            out.push(point);
-            out.push(i1);
-            out.push(i2);
+            match emission {
+                // `addIntermediatePointsNoAlloc(.., point, n, 1, i1, i2, false)`.
+                Emission::NoAlloc => {
+                    out.push(point);
+                    out.push(i1);
+                    out.push(i2);
+                }
+                // `addIntermediatePoints(vertices, point, n, nDivisions, i1, i2, crs84)`
+                // (RI7H.ec:2081), called at `0x28f8e`: `nDivisions` goes as it is, a zero
+                // too, which the callee counts as one.
+                Emission::Refined { crs84, n_divisions } => {
+                    add_intermediate_points(&mut out, point, n, n_divisions, Some((i1, i2)), crs84);
+                }
+            }
         } else {
-            // `addIntermediatePointsNoAlloc(.., point, n, 1, null, null, false)`,
-            // whose null arm writes the single point `p` at `nDivisions` one.
-            out.push(point);
+            match emission {
+                // `addIntermediatePointsNoAlloc(.., point, n, 1, null, null, false)`,
+                // whose null arm writes the single point `p` at `nDivisions` one.
+                Emission::NoAlloc => out.push(point),
+                // `if(!nDivisions) vertices.Add(point)` (RI7H.ec:2085-2086): the test of
+                // `r13d` at `0x29082`, and the `Add` called at `0x290bd`.
+                Emission::Refined { n_divisions: 0, .. } => out.push(point),
+                // `addIntermediatePoints(vertices, point, n, nDivisions, null, null, crs84)`
+                // (RI7H.ec:2088), called at `0x2919a`.
+                Emission::Refined { crs84, n_divisions } => {
+                    add_intermediate_points(&mut out, point, n, n_divisions, None, crs84);
+                }
+            }
             direction = ndir;
         }
         point = n;
     }
     out
+}
+
+/// The points from which the five sides of a polar pentagon's refined boundary are built, at
+/// each of the five turns about the pole: side `k` runs from `b[k]` to `b[k + 1]`, leaves its
+/// rhombus at `d[k]` and enters the next at `ab[k + 1]`, and the fifth side comes back to
+/// `b[0]` through `d[4]` and `ab[0]`. They are the eC's `b`, `d` and `ab` shifted by `k` along
+/// the diagonal of the 5x6 layout (`RI7H.ec:2197-2202`), towards the south-east about the north
+/// pole and towards the north-west about the south pole.
+struct PolarSides {
+    b: [(f64, f64); 5],
+    d: [(f64, f64); 5],
+    ab: [(f64, f64); 5],
+    /// The two images of the pole between which the 5x6 CRS closes the ring.
+    pole: [(f64, f64); 2],
+}
+
+/// The sides of the polar pentagon about `root` (`0xA` the north pole, `0xB` the south), at an
+/// even level or at an odd one: the four polar arms of the allocating
+/// `I7HZone::getBaseRefinedVertices` (`RI7H.ec:2187-2212`, `:2213-2239`, `:2264-2288` and
+/// `:2289-2313`), in the order the library performs them. `None` for a root that is neither
+/// pole, where the eC's odd arm adds nothing (`RI7H.ec:2261-2314`).
+///
+/// The function is not guarded, and gcc re-associated each arm in its own way. Every form below
+/// was read from DGGAL v0.0.6 as built with `-O2 -ffast-math` (`libdggal.so`, BuildID
+/// `e75d6ab18f8b460713ebcd21df6f07922fb909c3`), where `getBaseRefinedVertices` lies at
+/// `0x29220` to `0x2a857`. The odd arms are compiled as those of the `NoAlloc` copy, which
+/// [`polar_pentagon_outline`] ports for `containsPoint`, save at one site (ON-4); the even arms
+/// have no counterpart there. The two copies are kept apart, each beside the addresses it was
+/// read from.
+///
+/// Each arm shifts its points with `k` from zero. At zero the sums are exact (no coordinate
+/// here is a negative zero), so the first of each five is the unshifted point, as in the
+/// library, which drops the eC's `+ 0` and `- 0`.
+fn polar_pentagon_sides(root: i64, odd: bool, oonp: f64) -> Option<PolarSides> {
+    let turns = |shifted: &dyn Fn(f64) -> (f64, f64)| {
+        [
+            shifted(0.0),
+            shifted(1.0),
+            shifted(2.0),
+            shifted(3.0),
+            shifted(4.0),
+        ]
+    };
+    let r = 1.0 / 5.0;
+    match (root, odd) {
+        // The north pole at an even level (RI7H.ec:2187-2212), compiled at `0x29990`.
+        (0xA, false) => {
+            // `oonp * A` and `oonp * B`, taken before the roots are told apart: `0x2930f`
+            // (`.rodata` `0x4a110`) and `0x2930b` (`0x4a118`).
+            let a_p = oonp * EVEN_HEX_A;
+            let b_p = oonp * EVEN_HEX_B;
+            // faithful: site EN-2. `ab.x = (a.x + b.x) / 2` (RI7H.ec:2191), with
+            // `a.x = 1 - oonp * B` and `b.x = 1 - oonp * A`, is `(((1 - A') - B') + 1) * 0.5`:
+            // `subsd` at `0x299aa` and `0x29a5b`, `addsd` at `0x29a7d`, `mulsd` by the half of
+            // `.rodata` `0x4a028` at `0x29a89`. It is the source's double at each of the ten
+            // even levels; it is ported as compiled all the same.
+            let ab_x = (((1.0 - a_p) - b_p) + 1.0) * 0.5;
+            // faithful: site EN-5. `d.y`, the second member of the rotated offset
+            // `(b.y - ab.y) - (b.x - ab.x)` added to `b.y` (RI7H.ec:2194-2195), is
+            // `(3 A' - 1) + ab.x`: `mulsd` by three at `0x29a75`, `subsd` at `0x29a9e`, `addsd`
+            // at `0x29aaf`. The eC's order gives another double at every even level.
+            let d_y = (3.0 * a_p - 1.0) + ab_x;
+            Some(PolarSides {
+                // faithful: site EN-1. The eC shifts the corner `b`, as `b.x + k` with
+                // `b.x = 1 - A'` (RI7H.ec:2197-2200); the library adds `A'` to, and subtracts
+                // it from, the packed whole numbers `(5, 4)`, `(4, 3)`, `(3, 2)` and `(2, 1)`
+                // of `.rodata` `0x49b50` to `0x49b80`, so that `b.x + k` is `(1 + k) - A'`:
+                // `subpd` at `0x299f3`, `0x29a10`, `0x29a31` and `0x29a4e`, with `A' + k` from
+                // the `addpd` at `0x299d9`, `0x29a0c`, `0x29a28` and `0x29a52`. The eC's order
+                // gives another double at levels 0, 4, 10 and 16.
+                b: turns(&|k| ((1.0 + k) - a_p, a_p + k)),
+                // faithful: site EN-4. `d.x`, which is `(b.y - ab.y) + b.x` (RI7H.ec:2194-2195), is folded to
+                // one,
+                // the word of `.rodata` `0x49a70` stored at `0x299ea`, and `d.x + k` to the
+                // whole numbers stored at `0x29b5c`, `0x29bca`, `0x29c57` and `0x29d25` (or
+                // `0x2a2f3`); `d.y + k` is the `addsd` at `0x29af1`, `0x29bea`, `0x29c77` and
+                // `0x29d20` (or `0x2a2ee`).
+                d: turns(&|k| (1.0 + k, d_y + k)),
+                // faithful: site EN-3. `ab.y = (a.y + b.y) / 2` (RI7H.ec:2191) is folded to zero, stored at
+                // `0x299af`, so that `ab.y + k` is `k`; `ab.x + k` is the `addsd` at `0x29ab3`
+                // and the `addpd` at `0x29b4a`, `0x29bc1` and `0x29c4e`.
+                ab: turns(&|k| (ab_x + k, k)),
+                pole: [(5.0, 4.0), (1.0, 0.0)],
+            })
+        }
+        // The south pole at an even level (RI7H.ec:2213-2239), compiled at `0x29db0`.
+        (0xB, false) => {
+            let a_p = oonp * EVEN_HEX_A;
+            let b_p = oonp * EVEN_HEX_B;
+            // `b.x = 4 + oonp * A` (`0x29de4`). `ab.x` is the eC's own `(a.x + b.x) / 2`
+            // (RI7H.ec:2217), `a.x` being `B' + 4` (`0x29dc7`): the sum at `0x29e10` and the
+            // product by the half at `0x29e14`, which is the quotient by two exactly.
+            let b_x = 4.0 + a_p;
+            let ab_x = ((b_p + 4.0) + b_x) * 0.5;
+            // faithful: site ES-5. `d.y`, the rotated offset `(b.y - ab.y) - (b.x - ab.x)`
+            // added to `b.y` (RI7H.ec:2220-2221), is `((6 - A') - A') + (ab.x - b.x)`: `subsd`
+            // at `0x29e0c`, `0x29e24` and `0x29e46`, `addsd` at `0x29e5b`. It is the source's
+            // double at each of the ten even levels; it is ported as compiled all the same.
+            let d_y = ((6.0 - a_p) - a_p) + (ab_x - b_x);
+            Some(PolarSides {
+                // faithful: site ES-1. The eC shifts `b = (4 + A', 6 - A')` by `k`
+                // (RI7H.ec:2223-2226); the library forms `(4 - k) + A'` and `(6 - k) - A'`
+                // from the whole numbers: `addsd` at `0x29e5f`, `0x29f42` and `0x29ff7`,
+                // `subsd` at `0x29e81`, `0x29f03`, `0x29fb2` and `0x2a098`, and at the fourth
+                // turn `A'` itself (`0x2a09c`). The eC's order gives another double at every
+                // even level.
+                b: turns(&|k| ((4.0 - k) + a_p, (6.0 - k) - a_p)),
+                // faithful: site ES-4. `d.x`, which is `(b.y - ab.y) + b.x` (RI7H.ec:2220-2221), is folded to
+                // four,
+                // the word of `.rodata` `0x49a80` stored at `0x29de8`, and `d.x - k` to the
+                // whole numbers stored at `0x29f18`, `0x29fc5`, `0x2a054` and `0x2a144` (or
+                // `0x2a251`); `d.y - k` is the `subsd` at `0x29f2d`, `0x29fe2`, `0x2a07f` and
+                // `0x2a13c` (or `0x2a26a`).
+                d: turns(&|k| (4.0 - k, d_y - k)),
+                // faithful: site ES-3. `ab.y = (a.y + b.y) / 2` (RI7H.ec:2217) is folded to six, the word of
+                // `.rodata` `0x49a88` stored at `0x29dfc`, and `ab.y - 1` to the five stored at
+                // `0x29e78`; `ab - k` is the `subsd` at `0x29e42` and the `addpd` of `(-k, -k)`
+                // at `0x29f0f`, `0x29fb6` and `0x2a061`.
+                ab: turns(&|k| (ab_x - k, 6.0 - k)),
+                pole: [(0.0, 2.0), (4.0, 6.0)],
+            })
+        }
+        // The north pole at an odd level (RI7H.ec:2264-2288), compiled at `0x2a390`.
+        (0xA, true) => {
+            // `(C', A')`, the packed product of `oonp` and `.rodata` `0x49ba0` at `0x2a390`.
+            let c_p = oonp * ODD_HEX_C;
+            let a_p = oonp * ODD_HEX_A;
+            // faithful: site ON-2. `ab = a + (b - a) * r` (RI7H.ec:2268) is folded whole: in
+            // `ab.x` every term in `oonp` collapses into the one coefficient
+            // `-B + (B - C) * r`, which rounds to `-1.4` (`.rodata` `0x49bb0`, the `mulpd` at
+            // `0x2a48b`), and `ab.y` is `(C' + A') * r - C'` (`addpd` at `0x2a476`, the same
+            // `mulpd`, `subpd` at `0x2a4a0`). The eC's order gives another double at levels
+            // 1, 9 and 15. The offset is kept apart from the corner, for the first turn takes
+            // it so (ON-4).
+            let ab_off = (
+                (-ODD_HEX_B + (ODD_HEX_B - ODD_HEX_C) * r) * oonp,
+                (c_p + a_p) * r - c_p,
+            );
+            // `ab` itself, `(1 + ab_off.x, ab_off.y)`: the `addpd` at `0x2a4a5`, stored at
+            // `0x2a4b5`.
+            let ab = (1.0 + ab_off.0, ab_off.1);
+            // faithful: site ON-3. `c` is never formed: in `d = b + (c - b) * r`
+            // (RI7H.ec:2269-2270), `c.x - b.x` is `C' + A'`, and `(c.y - b.y) * r` is the
+            // folded `fl((B - A) * r)` of `.rodata` `0x4a160` times `oonp` (`0x2a4d0`); the
+            // `mulpd` at `0x2a493` and the `addpd` at `0x2a4f2` assemble both members. It is
+            // the source's double at each of the ten odd levels; it is ported as compiled all
+            // the same.
+            let d = (
+                (1.0 - c_p) + (c_p + a_p) * r,
+                (ODD_HEX_B - ODD_HEX_A) * r * oonp + a_p,
+            );
+            Some(PolarSides {
+                // faithful: site ON-1. As at the even level (EN-1), `b.x + k` (RI7H.ec:2272-2275) is
+                // `(1 + k) - C'` and `b.y + k` is `A' + k`, from the same packed whole
+                // numbers: `subpd` at `0x2a3cf`, `0x2a3f9`, `0x2a41a` and `0x2a42b`, `addpd`
+                // at `0x2a3d7`, `0x2a3f5`, `0x2a411` and `0x2a3db`; `b` itself is the `subsd`
+                // at `0x2a451`. The eC's order gives another double at levels 3, 9, 15 and 19.
+                b: turns(&|k| ((1.0 + k) - c_p, a_p + k)),
+                // `d + k`, a packed sum with `(k, k)`: `0x2a599`, `0x2a5f6`, `0x2a699` and
+                // `0x2a4ff`.
+                d: turns(&|k| (d.0 + k, d.1 + k)),
+                // faithful: site ON-4. At the first turn alone the whole number goes inside
+                // the bracket, `ab + 1` being `(1 + 1) + ab_off.x` and `1 + ab_off.y`, the
+                // packed sum of the offset with `(2, 1)` at `0x2a4cb`; at the second, third
+                // and fourth it is the eC's own `ab + k` (RI7H.ec:2273-2275), the stored `ab`
+                // and `(k, k)` at `0x2a579`, `0x2a60c` and `0x2a658`. The eC's `ab + 1` gives
+                // another double at levels 11, 13 and 19. The `NoAlloc` copy takes the
+                // bracketed form at all four turns, and there the two copies part, at level 5
+                // alone: at the fourth turn of `0000000`, by one unit in the last place.
+                ab: turns(&|k| {
+                    if k == 1.0 {
+                        (2.0 + ab_off.0, 1.0 + ab_off.1)
+                    } else {
+                        (ab.0 + k, ab.1 + k)
+                    }
+                }),
+                pole: [(5.0, 4.0), (1.0, 0.0)],
+            })
+        }
+        // The south pole at an odd level (RI7H.ec:2289-2313), compiled at `0x29584`.
+        (0xB, true) => {
+            // `(B', C')`, the packed product of `oonp` and `.rodata` `0x49c00` at `0x29584`,
+            // and `A'` at `0x295f7`.
+            let a_p = oonp * ODD_HEX_A;
+            let b_p = oonp * ODD_HEX_B;
+            let c_p = oonp * ODD_HEX_C;
+            let a = (4.0 + b_p, 6.0 + c_p);
+            let b = (4.0 + c_p, 6.0 - a_p);
+            // `ab = a + (b - a) * r` as the eC writes it (RI7H.ec:2293), the sum's terms
+            // exchanged: `subpd` at `0x29653`, `mulpd` at `0x29669`, `addpd` at `0x29683`.
+            let ab = (a.0 + (b.0 - a.0) * r, a.1 + (b.1 - a.1) * r);
+            // faithful: site OS-2. `c` is not formed here either: in `d = b + (c - b) * r`
+            // (RI7H.ec:2294-2295), `c.x - b.x` is the eC's own `(4 - A') - b.x` (`0x2962f`),
+            // and `c.y - b.y`, which is `(6 - B') - (6 - A')`, is `A' - B'` (`0x29644`); the
+            // `mulpd` at `0x29664` and the `addpd` at `0x2967e` follow. It is the source's
+            // double at each of the ten odd levels; it is ported as compiled all the same.
+            let d = (((4.0 - a_p) - b.0) * r + b.0, (a_p - b_p) * r + b.1);
+            Some(PolarSides {
+                // faithful: site OS-1. As at the even level (ES-1), `b - k` (RI7H.ec:2297-2300) is
+                // `((4 - k) + C', (6 - k) - A')`: `addsd` at `0x296d1`, `0x2977a` and
+                // `0x29821`, `subsd` at `0x2966e`, `0x2960f`, `0x2982d` and `0x298da`, and at
+                // the fourth turn `C'` itself (`0x2989d`). The eC's order gives another double
+                // at every odd level.
+                b: turns(&|k| ((4.0 - k) + c_p, (6.0 - k) - a_p)),
+                // `d - k` and `ab - k`, packed sums with `(-k, -k)`: `0x29710`, `0x297eb`,
+                // `0x29899` and `0x29698` for `d`; `0x296bd`, `0x2976d`, `0x29814` and
+                // `0x298b1` for `ab`.
+                d: turns(&|k| (d.0 - k, d.1 - k)),
+                ab: turns(&|k| (ab.0 - k, ab.1 - k)),
+                pole: [(0.0, 2.0), (4.0, 6.0)],
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The zone's refined boundary in the 5x6 plane: the allocating
+/// `I7HZone::getBaseRefinedVertices(crs84, nDivisions)` (`RI7H.ec:2167-2331`), compiled at
+/// `0x29220` to `0x2a857` in `libdggal.so`, BuildID
+/// `e75d6ab18f8b460713ebcd21df6f07922fb909c3`. Every edge is divided by
+/// [`add_intermediate_points`]: the edges of a polar pentagon from [`polar_pentagon_sides`], and
+/// those of every other zone as [`add_non_polar_vertices_refined`] walks them.
+///
+/// It is the ring from which the engine's refined boundary in WGS84 is projected (`crs84`
+/// true), and, with `crs84` false, the ring its planar accessor `getZoneRefinedCRSVertices`
+/// answers in the 5x6 CRS (`RI7H.ec:3887`). The two differ where
+/// [`add_intermediate_points`] says, and in the fifth side of a polar pentagon: towards WGS84
+/// it is divided as the other four are, and in the 5x6 CRS it is closed through the two images
+/// of the pole.
+///
+/// [`base_refined_vertices`] ports the other copy, `getBaseRefinedVerticesNoAlloc`, at one
+/// division and odd levels, for `containsPoint`; the two share the walker and nothing else.
+///
+/// The zone must have geometry. A Z7 identifier of level 20 is the null zone to the eC's `to7H`
+/// (`RI7H_Z7.ec:348-352`), which no `Z` of this crate stands for: the caller answers for such
+/// an identifier before it asks for this ring.
+fn get_base_refined_vertices(z: &Z, crs84: bool, n_divisions: i32) -> Vec<(f64, f64)> {
+    // `1.0 / (7 * p)` (RI7H.ec:2174): `divsd` at `0x292dd`, the divisor converted as the
+    // `uint64` it is at `0x292b6`. `POW7` is a table read of `levelI49R` (`0x292a7`).
+    let oonp = 1.0 / (7 * pow7(z.l49r)) as f64;
+
+    let polar = if z.sub_hex == 0 {
+        // Even level (RI7H.ec:2181-2253): the test of `subHex` at `0x292fa`.
+        polar_pentagon_sides(z.root, false, oonp)
+    } else if z.root > 9 && z.sub_hex == 1 {
+        // Polar pentagons at an odd level (RI7H.ec:2261-2314): the tests at `0x293f0` and
+        // `0x293f5`. A root beyond the two poles adds nothing, as in the eC (`0x2957e`); this
+        // crate builds no such zone.
+        let Some(sides) = polar_pentagon_sides(z.root, true, oonp) else {
+            return Vec::new();
+        };
+        Some(sides)
+    } else {
+        None
+    };
+
+    let Some(sides) = polar else {
+        // Every other zone (RI7H.ec:2240-2252 and :2315-2328): the offsets of the six vertices
+        // from the centroid, scaled by `oonp` (`0x2932b` to `0x293be` at an even level,
+        // `0x293ff` to `0x29483` at an odd one, where the library scales by `-oonp` and takes
+        // the opposite, the same doubles), and the walk about the centroid (`0x293cf`). The
+        // centroid is folded as `getVertices` folds its own (RI7H.ec:2176-2179, the same text):
+        // the comparisons at `0x292d1` and `0x294c0` with `fl(6 + 1e-9)` and `fl(5 + 1e-9)` of
+        // `.rodata` `0x4a128` and `0x4a130`, and at `0x294d2` with zero.
+        let table = if z.sub_hex == 0 {
+            &EVEN_HEX_VERTS
+        } else {
+            &ODD_HEX_VERTS
+        };
+        return add_non_polar_vertices_refined(
+            z,
+            centroid5x6(z),
+            &scale_offsets(table, oonp),
+            Emission::Refined { crs84, n_divisions },
+        );
+    };
+
+    let mut out: Vec<(f64, f64)> = Vec::with_capacity(refined_capacity(n_divisions));
+    // The four sides that stay within the layout (RI7H.ec:2197-2200 and its three fellows),
+    // each from `b + k` to `b + (k + 1)` across the interruption between `d + k` and
+    // `ab + (k + 1)`.
+    for k in 0..4 {
+        add_intermediate_points(
+            &mut out,
+            sides.b[k],
+            sides.b[k + 1],
+            n_divisions,
+            Some((sides.d[k], sides.ab[k + 1])),
+            crs84,
+        );
+    }
+    // The fifth side, which wraps to the first corner (RI7H.ec:2201-2211): the test of `crs84`
+    // at `0x29c8b`, `0x2a0b2`, `0x2a6aa` and `0x298f4` in the four arms.
+    if crs84 {
+        add_intermediate_points(
+            &mut out,
+            sides.b[4],
+            sides.b[0],
+            n_divisions,
+            Some((sides.d[4], sides.ab[0])),
+            crs84,
+        );
+    } else {
+        out.extend([
+            sides.b[4],
+            sides.d[4],
+            sides.pole[0],
+            sides.pole[1],
+            sides.ab[0],
+        ]);
+    }
+    out
+}
+
+/// The room the eC asks for in the array of a refined boundary before it fills it,
+/// `Max(1, nDivisions) * 6` points (`RI7H.ec:2169`). It is a hint and no more: the array grows
+/// where the pole rule or an interruption adds points. The hint stops at the 100,000 divisions
+/// beyond which the public surface refuses a refinement, so that no argument asks for more
+/// memory than its ring will fill.
+fn refined_capacity(n_divisions: i32) -> usize {
+    6 * n_divisions.clamp(1, crate::grid::MAX_EDGE_REFINEMENT as i32) as usize
 }
 
 /// The inside-or-boundary test for the zone's polygon (`containsPoint`,
@@ -1978,7 +2393,7 @@ fn compute_parents(zone: &Z) -> Vec<Z> {
 /// the recovery py4dggs adds there and why it is not reproduced. The even level
 /// gives the absent value too, where the eC does, should its wrapped row or column
 /// still fall outside the rhombus.
-fn from_centroid(level: i64, cx: f64, cy: f64) -> Option<Z> {
+pub(super) fn from_centroid(level: i64, cx: f64, cy: f64) -> Option<Z> {
     // `level` is non-negative, so the integer division matches Python's
     // `math.floor(level / 2)`.
     let l49r = level / 2;
@@ -2560,7 +2975,7 @@ fn from_7h(zone: &Z) -> Option<Z7Parts> {
 /// the child, can name the polar zone's own centre, or no zone at all, where the walk
 /// came from a neighbouring sub-hexagon. At such zones, `0000000000000000131` among
 /// them, only the walk's own zone gives the engine's centroid and vertices.
-fn zone_from_steps(base_cell: u64, directions: &[u8]) -> Z {
+pub(super) fn zone_from_steps(base_cell: u64, directions: &[u8]) -> Z {
     let z7_root = INV_ROOT_MAP[base_cell as usize];
     let mut zone = Z::new(0, z7_root, 0, 0, 0);
     let mut offset: i64 = 0;
@@ -2635,7 +3050,7 @@ fn centroid5x6(zone: &Z) -> (f64, f64) {
 }
 
 /// The fold `getVertices` applies to the centroid it is handed (`RI7H.ec:1806-1809`).
-fn fold_centroid(mut cx: f64, mut cy: f64) -> (f64, f64) {
+pub(super) fn fold_centroid(mut cx: f64, mut cy: f64) -> (f64, f64) {
     if cy > 6.0 + 1e-9 || cx > 5.0 + 1e-9 {
         cx -= 5.0;
         cy -= 5.0;
@@ -2671,7 +3086,7 @@ fn verts5x6(zone: &Z, cx: f64, cy: f64, level: i64) -> Vec<(f64, f64)> {
 /// `0x1eff0`) returns them: without the final wrap of [`verts5x6`], and with `n_pts` the
 /// caller's, as `getNeighbors` passes its own zone's count for its centroid child
 /// (`RI7H.ec:1146`).
-fn get_vertices(
+pub(super) fn get_vertices(
     root: i64,
     sub_hex: i64,
     n_pts: i64,
@@ -2898,9 +3313,236 @@ fn get_neighbors(z: &Z) -> Vec<Option<Z>> {
     out
 }
 
+// --------------------------------------------------------------------------- //
+// Parents and children, as the engine finds them (RI7H.ec getParents, getChildren)
+// --------------------------------------------------------------------------- //
+
+/// The factor by which `getParents` shortens the step from a centroid towards a vertex, the
+/// `.99` of `RI7H.ec:1338`: the double that the library holds at `0x4a120`.
+const PARENT_STEP_FACTOR: f64 = 0.99;
+
+/// The factor by which `getChildren` lengthens the step from the centroid of the centroid
+/// child towards one of its vertices, the `3` of `RI7H.ec:2706`: the double that the library
+/// holds at `0x49b70`.
+const CHILD_STEP_FACTOR: f64 = 3.0;
+
+/// The zone's parents as `I7HZone::getParents` lists them (`RI7H.ec:1261-1358`), in its
+/// order and before anything is left out: none where `parent0` answers nullZone, which is at
+/// level 0 and wherever the search for the parent of an even zone finds none; the primary
+/// parent alone for a zone that is its centroid child; and otherwise the primary parent and
+/// the first other zone of its level found by stepping from the zone's centroid towards
+/// each of the zone's own vertices in turn, a hundredth short of it, and quantising the
+/// point reached. Where no vertex leads to another zone the primary parent stands alone, as
+/// in the eC, whose only word on it is a message of its debug build.
+///
+/// `getParents` carries no `__attribute__ ((optimize("-fno-unsafe-math-optimizations")))`,
+/// and it is compiled at `0x24610` to `0x24a10` in `libdggal.so`, BuildID
+/// `e75d6ab18f8b460713ebcd21df6f07922fb909c3`, in the shape of `getNeighbors`. Every function
+/// it calls is called out of line there: the `parent0` property (`0x201b0`), the
+/// `centroidChild` property (`0x227b0`), the `centroid` property (`0x20200`), `getVertices`
+/// (`0x1eff0`), `cross5x6Interruption` (`0x360d0`), `move5x6Vertex2` (`0x37be0`) and
+/// `fromCentroid` (`0x234e0`). The five sites at which the compiled order departs from the
+/// source, GP7-1 to GP7-5, are followed below. They are inert: GP7-4 is the same test either
+/// way, and with the others put back to the source's order no list changed at any of the
+/// 62,876 zones compared.
+fn get_parents(z: &Z) -> Vec<Z> {
+    let Some(parent0) = get_parent0(z) else {
+        return Vec::new();
+    };
+    let mut out = vec![parent0];
+    if get_centroid_child(&parent0) == Some(*z) {
+        return out;
+    }
+    // The centroid property, unfolded, as `c = centroid` (RI7H.ec:1275); `getVertices`
+    // folds its own copy (RI7H.ec:1806-1809).
+    let c = zone_centroid(z);
+    let (fx, fy) = fold_centroid(c.0, c.1);
+    let vertices = get_vertices(z.root, z.sub_hex, zone_npoints(z), fx, fy, zone_level(z));
+    let p_level = zone_level(&parent0);
+
+    for &(vx, vy) in &vertices {
+        let mut acc = c;
+        let mut dx = vx - acc.0;
+        let mut dy = vy - acc.1;
+        // faithful (GP7-1, GP7-2): `dx = vertices[i].x - 5 - acc.x` and its ordinate
+        // (RI7H.ec:1292-1293) are compiled as `(vertices[i].x - acc.x) - 5`, at `0x24950`
+        // and `0x24958` (`subsd` of 5.0 at `0x49b50` from the differences taken at
+        // `0x2477e` and `0x2478a`), and `vertices[i].x + 5 - acc.x` and its ordinate
+        // (RI7H.ec:1297-1298) as `(vertices[i].x - acc.x) + 5`, at `0x24968` and `0x24970`,
+        // in `libdggal.so`, BuildID `e75d6ab18f8b460713ebcd21df6f07922fb909c3`. The rounding
+        // falls at the magnitude of five rather than of the offset. Either coordinate
+        // suffices here (RI7H.ec:1290, :1295), where `getNeighbors` and `getChildren` ask
+        // for both.
+        if dx > 3.0 || dy > 3.0 {
+            dx -= 5.0;
+            dy -= 5.0;
+        } else if dx < -3.0 || dy < -3.0 {
+            dx += 5.0;
+            dy += 5.0;
+        }
+
+        if dx.abs() < 1.0 && dy.abs() < 1.0 {
+            // faithful (GP7-4): `acc.x - acc.y - 1E-11 > 0` (RI7H.ec:1303) is compiled as
+            // `acc.x - acc.y > 1e-11`, the difference at `0x24801` compared at `0x24806` and
+            // again at `0x2485a`. The two are the same test in IEEE arithmetic, as at the
+            // like site of `get_neighbors`; the compiled one is written.
+            let north = acc.0 - acc.1 > 1e-11;
+            // `(int)(acc.y + 1E-11)` and `(int)(acc.x + 1E-11)` (RI7H.ec:1304-1305), each a
+            // 32-bit `cvttsd2si`, at `0x24821` and `0x2498c`; the library takes only the one
+            // its arm compares, and neither is bounded as `getNeighbors` bounds its own.
+            let on_interruption = if north {
+                (acc.1 - f64::from(cvtt_i32(acc.1 + 1e-11))).abs() < 1e-11
+            } else {
+                (acc.0 - f64::from(cvtt_i32(acc.0 + 1e-11))).abs() < 1e-11
+            };
+            if on_interruption {
+                let ci = crate::fivebysix::cross5x6_interruption(c.0, c.1, !north, true);
+                let mut x = vx - ci.0;
+                let mut y = vy - ci.1;
+                // faithful (GP7-3, GP7-5): the eC's first arm, `if(x > 3 && dy > 3)`
+                // (RI7H.ec:1318), tests `dy`, which is below one in magnitude on this path,
+                // so it can never be taken; the compiler removed it, the first comparison
+                // after the call, at `0x2489b`, being the second arm's against -3.0, and it
+                // is omitted here too. The second arm, `vertices[i].x + 5 - ci.x` and its
+                // ordinate (RI7H.ec:1325-1326), is compiled as `(vertices[i].x - ci.x) + 5`,
+                // at `0x248db` and `0x248df`, as the pair above.
+                if x < -3.0 && y < -3.0 {
+                    x += 5.0;
+                    y += 5.0;
+                }
+                if x.abs() < dx.abs() && y.abs() < dy.abs() {
+                    acc = ci;
+                    dx = x;
+                    dy = y;
+                }
+            }
+        }
+
+        // `.99 * dx` and `.99 * dy` (RI7H.ec:1338), each one product with the 0.99 at
+        // `0x4a120`, at `0x24710` and `0x24720`.
+        let v = move5x6_vertex2(
+            acc.0,
+            acc.1,
+            dx * PARENT_STEP_FACTOR,
+            dy * PARENT_STEP_FACTOR,
+            false,
+        );
+        if let Some(q) = from_centroid(p_level, v.0, v.1) {
+            if q != parent0 {
+                out.push(q);
+                return out;
+            }
+        }
+    }
+    out
+}
+
+/// The zone's children as `I7HZone::getChildren` lists them (`RI7H.ec:2634-2719`), in its
+/// order and before anything is left out: the primary children, the centroid child first,
+/// and then one zone for each vertex of the centroid child, found by stepping from the
+/// centroid child's centroid three times the offset of the vertex and quantising the point
+/// reached, `None` where `fromCentroid` answers nullZone. A zone without primary children
+/// has none at all: a zone of level 19, and an odd zone for which
+/// [`get_primary_children`] finds no centroid child within the rhombi and answers none,
+/// where the eC goes on from its null zone (`RI7H.ec:2745-2750`).
+///
+/// `getChildren` carries no `__attribute__ ((optimize("-fno-unsafe-math-optimizations")))`
+/// either, and it is compiled at `0x24a20` to `0x24de0` in `libdggal.so`, BuildID
+/// `e75d6ab18f8b460713ebcd21df6f07922fb909c3`, in the shape of `getNeighbors` once more,
+/// calling out of line `getPrimaryChildren` (`0x22890`), the `centroid` property
+/// (`0x20200`), `getVertices` (`0x1eff0`), `cross5x6Interruption` (`0x360d0`),
+/// `move5x6Vertex2` (`0x37be0`), `canonicalize5x6` (`0x3a080`) and `fromCentroid`
+/// (`0x234e0`). The five sites at which the compiled order departs from the source, GC7-1
+/// to GC7-5, are followed below. They are inert: GC7-4 is the same test either way, and with
+/// the others put back to the source's order no list changed at any of the 62,876 zones
+/// compared.
+fn get_children(z: &Z) -> Vec<Option<Z>> {
+    let primary = get_primary_children(z);
+    let mut out: Vec<Option<Z>> = primary.iter().copied().map(Some).collect();
+    let Some(&c0) = primary.first() else {
+        return out;
+    };
+    // The centroid property of the centroid child, unfolded, as `c = children[0].centroid`
+    // (RI7H.ec:2639); `getVertices` folds its own copy (RI7H.ec:1806-1809).
+    let c = zone_centroid(&c0);
+    let (fx, fy) = fold_centroid(c.0, c.1);
+    let c_level = zone_level(&c0);
+    let c_verts = get_vertices(c0.root, c0.sub_hex, zone_npoints(&c0), fx, fy, c_level);
+
+    // faithful (GC7-4): `c.x - c.y - 1E-11 > 0` (RI7H.ec:2644) is compiled as
+    // `c.x - c.y > 1e-11`, the difference taken once at `0x24b23` and compared at `0x24c67`
+    // and again at `0x24cbb`. The two are the same test in IEEE arithmetic, as at the like
+    // site of `get_neighbors`; the compiled one is written.
+    let north = c.0 - c.1 > 1e-11;
+    // `(int)(c.y + 1E-11)` and `(int)(c.x + 1E-11)` (RI7H.ec:2645-2646), each a 32-bit
+    // `cvttsd2si`, at `0x24b43` and `0x24b38`, and neither bounded as `getNeighbors` bounds
+    // its own.
+    let cy = f64::from(cvtt_i32(c.1 + 1e-11));
+    let cx = f64::from(cvtt_i32(c.0 + 1e-11));
+
+    for &(vx, vy) in &c_verts {
+        let mut cc = c;
+        let mut dx = vx - cc.0;
+        let mut dy = vy - cc.1;
+        // faithful (GC7-1, GC7-2): `dx = cVerts[i].x - 5 - cc.x` and its ordinate
+        // (RI7H.ec:2664-2665) are compiled as `(cVerts[i].x - cc.x) - 5`, at `0x24c1e` and
+        // `0x24c26` (`subsd` of 5.0 at `0x49b50` from the differences taken at `0x24bf2` and
+        // `0x24c04`), and `cVerts[i].x + 5 - cc.x` and its ordinate (RI7H.ec:2669-2670) as
+        // `(cVerts[i].x - cc.x) + 5`, at `0x24dac` and `0x24db4`, in `libdggal.so`, BuildID
+        // `e75d6ab18f8b460713ebcd21df6f07922fb909c3`. The rounding falls at the magnitude of
+        // five rather than of the offset.
+        if dx > 3.0 && dy > 3.0 {
+            dx -= 5.0;
+            dy -= 5.0;
+        } else if dx < -3.0 && dy < -3.0 {
+            dx += 5.0;
+            dy += 5.0;
+        }
+
+        if dx.abs() < 1.0
+            && dy.abs() < 1.0
+            && ((north && (c.1 - cy).abs() < 1e-11) || (!north && (c.0 - cx).abs() < 1e-11))
+        {
+            let ci = crate::fivebysix::cross5x6_interruption(c.0, c.1, !north, true);
+            let mut x = vx - ci.0;
+            let mut y = vy - ci.1;
+            // faithful (GC7-3, GC7-5): the eC's first arm, `if(x > 3 && dy > 3)`
+            // (RI7H.ec:2686), tests `dy`, which is below one in magnitude on this path, so
+            // it can never be taken; the compiler removed it, the first comparison after
+            // the call, at `0x24cfd`, being the second arm's against -3.0, and it is omitted
+            // here too. The second arm, `cVerts[i].x + 5 - ci.x` and its ordinate
+            // (RI7H.ec:2693-2694), is compiled as `(cVerts[i].x - ci.x) + 5`, at `0x24d40`
+            // and `0x24d44`, as the pair above.
+            if x < -3.0 && y < -3.0 {
+                x += 5.0;
+                y += 5.0;
+            }
+            if x.abs() < dx.abs() && y.abs() < dy.abs() {
+                cc = ci;
+                dx = x;
+                dy = y;
+            }
+        }
+
+        // `dx * 3` and `dy * 3` (RI7H.ec:2706), each one product with the 3.0 at `0x49b70`,
+        // at `0x24b90` and `0x24ba0`.
+        let v = move5x6_vertex2(
+            cc.0,
+            cc.1,
+            dx * CHILD_STEP_FACTOR,
+            dy * CHILD_STEP_FACTOR,
+            false,
+        );
+        let v = crate::fivebysix::canonicalize5x6(v.0, v.1);
+        out.push(from_centroid(c_level, v.0, v.1));
+    }
+    out
+}
+
 /// The Z7 address of `z7` at resolution `res`: the packed ancestry unpacked into its
 /// first `res` digits, stopping at the level-7 terminator, as the `level` property reads
-/// the packing (`RI7H_Z7.ec:46-50`). Shared by `quantize` and `neighbors`.
+/// the packing (`RI7H_Z7.ec:46-50`). Shared by `quantize`, `neighbors`, `parents` and
+/// `children`.
 fn z7_address(z7: Z7Parts, res: i64) -> Address {
     let mut address = Address::new(z7.root_pentagon, &[]);
     for l in 0..res {
@@ -2912,6 +3554,207 @@ fn z7_address(z7: Z7Parts, res: i64) -> Address {
         address.push(d);
     }
     address
+}
+
+// --------------------------------------------------------------------------- //
+// The zones of a level as a lattice, in the order of listZones (RI7H.ec)
+// --------------------------------------------------------------------------- //
+
+/// The value of the zone as an `I7HZone`, as the eC packs its bit class (`RI7H.ec:866-871`):
+/// `levelI49R` in four bits from bit 58, `rootRhombus` in four from bit 54, `rhombusIX`, which
+/// is `row * 7^levelI49R + col`, in fifty-one from bit 3, and `subHex` in the lowest three.
+///
+/// It is the key by which the engine orders the zones of one level. `listZones` sorts its
+/// answer (`RI7H.ec:829`) by `I7HZone::OnCompare` (`RI7H.ec:873-884`), which compares the
+/// levels and then the values, and the Z7 class then converts each zone to its own identifier
+/// where it stands (`RI7H_Z7.ec:674-695`): the order of a list is that of these values and
+/// not that of its Z7 identifiers. An odd level shares `levelI49R` with the even level below
+/// it, so the value orders the zones of one level alone.
+///
+/// For a zone of the lattice, its row and its column within `7^levelI49R`, the greatest
+/// index, `7^18 - 1`, fits the fifty-one bits. A zone that is not of the lattice is packed as
+/// the eC's bit class packs any value, each member cut to its own bits, so that the function
+/// answers every zone.
+fn i7h_value(z: &Z) -> u64 {
+    let p = pow7(z.l49r) as u64;
+    let index = (z.row as u64).wrapping_mul(p).wrapping_add(z.col as u64);
+    ((z.l49r as u64 & 0xf) << 58)
+        | ((z.root as u64 & 0xf) << 54)
+        | ((index & ((1 << 51) - 1)) << 3)
+        | (z.sub_hex as u64 & 7)
+}
+
+/// Whether `a` names the child a pentagon does not have: its first digit that is not 0 is 2
+/// under the base cells 0 to 5, or 5 under 6 to 11, which the eC's `fromTextID` refuses
+/// (`RI7H_Z7.ec:430-438`).
+fn names_deleted_child(a: &Address) -> bool {
+    let deleted = if a.base <= 5 { 2 } else { 5 };
+    a.digits().iter().find(|&&d| d != 0) == Some(&deleted)
+}
+
+/// The Z7 address of the I7H zone `z` of `level`, with its key, where `z` is a zone of the
+/// lattice; `None` where it is not.
+///
+/// A cell holds seven values of `subHex` at an odd level (`RI7H.ec:866-871`), and the cell of
+/// a pentagon has six zones: the seventh value converts to the address of the child a pentagon
+/// does not have, which is refused by its digit, or to the address of one of the six. So the
+/// address must also be of the level and read back to `z` through [`zone_from_steps`]: no cell
+/// hosts a zone under an address that names another.
+///
+/// From level 16 that leaves cells that host nothing, in bands beside the two edges of the
+/// icosahedron along which the engine's own answers are not consistent, from base cell 0 to 1
+/// and from 1 to 6. There the conversion gives a zone no address of its own: either none,
+/// where the engine prints an identifier that it cannot read back, or the address of another
+/// zone. From level 16 the lattice therefore holds fewer zones than the level counts.
+fn lattice_zone(level: u8, z: Z) -> Option<(Address, u64)> {
+    let p = pow7(z.l49r);
+    if !(0..12).contains(&z.root) || !(0..p).contains(&z.row) || !(0..p).contains(&z.col) {
+        return None;
+    }
+    let a = z7_address(from_7h(&z)?, i64::from(level));
+    if names_deleted_child(&a) {
+        return None;
+    }
+    (a.len() == usize::from(level) && zone_from_steps(a.base, a.digits()) == z)
+        .then(|| (a, i7h_value(&z)))
+}
+
+/// The zones of one cell of the root `root`, a rhombus or a polar root, in the ascending order
+/// of their keys: the cell's own zone at an even level, its sub-hexagons B to H at an odd one
+/// (`RI7H.ec:866-871`), those that are zones.
+fn lattice_cell(level: u8, root: u8, row: u64, col: u64) -> Vec<(Address, u64)> {
+    let sub_hexes: &[i64] = if level % 2 == 0 {
+        &[0]
+    } else {
+        &[1, 2, 3, 4, 5, 6, 7]
+    };
+    sub_hexes
+        .iter()
+        .filter_map(|&sub_hex| {
+            let z = Z::new(
+                i64::from(level / 2),
+                i64::from(root),
+                row as i64,
+                col as i64,
+                sub_hex,
+            );
+            lattice_zone(level, z)
+        })
+        .collect()
+}
+
+// --------------------------------------------------------------------------- //
+// The compaction of a set of zones (RI7H.ec)
+// --------------------------------------------------------------------------- //
+
+/// The compaction of a set of zones: every parent whose children are all in the set stands
+/// for those of them that have no other parent, or whose other parent was taken too, one
+/// level a pass from the finest level of the set upwards, in the ascending order of the
+/// zones' values as `I7HZone`s. Ports `compactI7HZones` (`RI7H.ec:3754-3862`) with the part
+/// of `RhombicIcosahedral7H::compactZones` that reads the array into a tree
+/// (`RI7H.ec:172-197`), statement for statement; the eC's local names are kept.
+///
+/// The eC's tree is ordered by the value of the zone, so that a zone given twice counts
+/// once, and it leaves the null zone out; a `BTreeMap` from that value, [`i7h_value`], to the
+/// zone is that tree, and the caller hands no null zone. A parent is taken when every child
+/// that `getChildren` lists for it is in the set, the null entries apart: thirteen for a
+/// hexagon and eleven for a pentagon, the primary children and the zones across the vertices
+/// of the centroid child. A zone leaves the set when every parent that `getParents` lists for
+/// it was taken, which is one for a centroid child and two for any other: so the children of
+/// a lone parent give way at its centroid child alone, and the twelve others stay beside the
+/// parent and overlap it. The congruent hierarchy of the Z7 digits plays no part.
+///
+/// Five things in the eC look like oversights and are the engine's answer, so all are kept.
+/// `output` is not emptied between passes. `next` is not emptied after a pass that ends the
+/// ascent, and the loop goes on after it (the eC's `break` is commented out). A zone for which
+/// `getParents` lists no parent leaves the set as soon as a pass meets it, the test that all
+/// its parents were taken being true of none: a zone of level 0 beside a finer zone, and, in
+/// the two broken seams, a zone for which the search of a parent finds none. And the short
+/// cut that follows the loop, meant to put the twelve zones of level 0 in the place of the
+/// seventy-two of level 1, builds each of its twelve zones as `{ r, 0 }`, which sets
+/// `levelI49R` to `r` and `rootRhombus` to nought: the zone at the origin of the first
+/// rhombus at twelve even levels, the last two of which are beyond the grid. No set of one
+/// level reaches the short cut, since a pass that holds the seventy-two takes the twelve and
+/// drops them all; a set of two levels can.
+///
+/// The function is meant for zones of one level, which `Grid` checks. The cost is that of
+/// the set: as many passes as the finest level of the set counts, at most nineteen, each a
+/// bounded amount of work for every zone it holds (its parents twice, the children of each,
+/// and a search of a tree for each child); and the zones a pass holds are zones of the set
+/// or parents of zones of the pass before, at most two for each.
+fn compact(input: &[Z]) -> Vec<Z> {
+    use std::collections::BTreeMap;
+    let mut max_level = 0;
+    let mut zones: BTreeMap<u64, Z> = BTreeMap::new();
+    for zone in input {
+        max_level = max_level.max(zone_level(zone));
+        zones.insert(i7h_value(zone), *zone);
+    }
+
+    let mut output: BTreeMap<u64, Z> = BTreeMap::new();
+    let mut next: BTreeMap<u64, Z> = BTreeMap::new();
+    let mut l = max_level - 1;
+    while l >= 0 {
+        for zone in zones.values() {
+            for c_parent in get_parents(zone) {
+                let key = i7h_value(&c_parent);
+                if next.contains_key(&key) {
+                    continue;
+                }
+                let parent_all_in = get_children(&c_parent)
+                    .iter()
+                    .flatten()
+                    .all(|c| zones.contains_key(&i7h_value(c)));
+                if parent_all_in {
+                    next.insert(key, c_parent);
+                }
+            }
+        }
+
+        for (&key, zone) in &zones {
+            let all_in = get_parents(zone)
+                .iter()
+                .all(|c_parent| next.contains_key(&i7h_value(c_parent)));
+            if !all_in {
+                output.insert(key, *zone);
+            }
+        }
+
+        if l >= 1 && !next.is_empty() {
+            // Not done: the next level becomes the zones to compact.
+            zones = std::mem::take(&mut next);
+        } else {
+            // Done: next is combined with output into the final zones.
+            zones = output.clone();
+            zones.extend(next.iter().map(|(&key, &zone)| (key, zone)));
+        }
+        l -= 1;
+    }
+
+    if zones.len() >= 72
+        && zones
+            .values()
+            .next()
+            .is_some_and(|zone| zone_level(zone) == 1)
+    {
+        let mut n_l1 = 0;
+        for zone in zones.values() {
+            match zone_level(zone) {
+                1 => n_l1 += 1,
+                0 => {}
+                _ => break,
+            }
+        }
+        if n_l1 == 72 {
+            // Simplifying the full globe to the zones of level 0 (the eC's own note); the
+            // zones built are those of the eC's initialiser, as the note above says.
+            zones = (0..12)
+                .map(|r| Z::new(r, 0, 0, 0, 0))
+                .map(|zone| (i7h_value(&zone), zone))
+                .collect();
+        }
+    }
+    zones.into_values().collect()
 }
 
 // --------------------------------------------------------------------------- //
@@ -3057,6 +3900,240 @@ impl Topology for HexA7 {
         Some(out)
     }
 
+    /// The zone's parents as the engine's `getZoneParents` lists them
+    /// (`RI7H_Z7.ec:550-556`): the zone taken to its I7H form, as `to7H` takes it; its
+    /// parents found by `I7HZone::getParents` (`RI7H.ec:1261-1358`); and each converted back
+    /// to Z7, as `from7H` converts it. The first is the engine's primary parent, `parent0`,
+    /// which is the zone the identifier names with its last digit dropped. A zone that is
+    /// the centroid child of that parent, which is one whose last digit is 0, has it alone;
+    /// any other zone lies across the boundary of two zones of the level above and has
+    /// both, the second found by quantising a point a hundredth short of one of the zone's
+    /// own vertices. A zone of level 0 has none.
+    ///
+    /// A departure from the engine: two kinds of entry that the engine lists are dropped,
+    /// as this crate never hands them out. They are an identifier that the engine cannot
+    /// read back, for which `from_7h` answers nothing here, and a repeat of an entry already
+    /// listed, where two I7H zones are given one identifier. Both occur only in the broken
+    /// seams, along the edges from base cell 0 to 1 and from 1 to 6 at resolutions 15 to
+    /// 19, where the engine's lists are not consistent with themselves; the list is
+    /// otherwise the engine's, entry for entry. There the account above does not hold of
+    /// every zone: the engine may find no second parent, its primary parent need not be the
+    /// zone the identifier names with its last digit dropped, and a zone may have no parent
+    /// at all. On the three grids the parents of `0000000000000001644` are
+    /// `000000000000000005` and `000000000000000000`, and `00000000000000001311` has none.
+    /// Neither of those two identifiers is the zone found at its own centroid, and the same
+    /// held of every zone with no parent, or with another primary parent, that was compared
+    /// with the engine: as measured, they are identifiers that a text can name and that no
+    /// position was seen to quantise to, whereas a zone with one parent that is no centroid
+    /// child is met at zones obtained from positions (see [`crate::Grid::parents`] for what
+    /// was measured).
+    ///
+    /// An address that fails [`HexA7::is_valid_address`], and one of the twentieth level,
+    /// which has no geometry (see [`HexA7::is_null_geometry`]), have no parents, as `Grid`
+    /// answers them and as the engine answers a zone of the twentieth level; so the method
+    /// answers every address, on a direct call as well, and never `None`.
+    fn parents(a: &Address) -> Option<Vec<Address>> {
+        if !Self::is_valid_address(a) || Self::is_null_geometry(a) || a.is_empty() {
+            return Some(Vec::new());
+        }
+        let zone = zone_from_steps(a.base, a.digits());
+        let res = a.len() as i64 - 1;
+        let mut out: Vec<Address> = Vec::with_capacity(2);
+        for p in get_parents(&zone) {
+            let Some(z7) = from_7h(&p) else {
+                continue;
+            };
+            let parent = z7_address(z7, res);
+            if !out.contains(&parent) {
+                out.push(parent);
+            }
+        }
+        Some(out)
+    }
+
+    /// The zone's children as the engine's `getZoneChildren` lists them
+    /// (`RI7H_Z7.ec:558-564`): the zone taken to its I7H form; its children found by
+    /// `I7HZone::getChildren` (`RI7H.ec:2634-2719`); and each converted back to Z7. They are
+    /// thirteen for a hexagon and eleven for a pentagon, in the engine's order: first the
+    /// primary children, seven or six, the centroid child at their head, which are the
+    /// zones the identifier names with one digit more, though not in the order of the
+    /// digits; and then one zone across each vertex of the centroid child, each of which
+    /// lies across this zone's boundary and is a child of a neighbour too. A zone of level
+    /// 19, the finest, has none.
+    ///
+    /// A departure from the engine: three kinds of entry that the engine lists are dropped,
+    /// as this crate never hands them out. They are its null zone, where the point stepped
+    /// to lies in no cell; an identifier that the engine cannot read back, for which
+    /// `from_7h` answers nothing here; and a repeat of an entry already listed. All three
+    /// occur only in the broken seams, along the edges from base cell 0 to 1 and from 1 to
+    /// 6, in the lists of zones of resolutions 14 to 18, where the engine's lists are not
+    /// consistent with themselves; the list is otherwise the engine's, entry for entry.
+    /// There a list may be shorter, a zone need not be among the children of its parents,
+    /// nor a zone that the identifier names with one digit more among the children: on the
+    /// three grids the engine's children of `0000000000000005` hold its null zone four
+    /// times, and those of `00052626050026015` hold `012222222222222220`, which it cannot
+    /// read back, four times, twice among the primary children.
+    ///
+    /// An address that fails [`HexA7::is_valid_address`], and one of the twentieth level,
+    /// have no children, as for [`HexA7::parents`]; the method answers every address and
+    /// never `None`.
+    fn children(a: &Address) -> Option<Vec<Address>> {
+        if !Self::is_valid_address(a) || Self::is_null_geometry(a) {
+            return Some(Vec::new());
+        }
+        let zone = zone_from_steps(a.base, a.digits());
+        let res = a.len() as i64 + 1;
+        let mut out: Vec<Address> = Vec::with_capacity(13);
+        for c in get_children(&zone) {
+            let Some(z7) = c.and_then(|z| from_7h(&z)) else {
+                continue;
+            };
+            let child = z7_address(z7, res);
+            if !out.contains(&child) {
+                out.push(child);
+            }
+        }
+        Some(out)
+    }
+
+    /// The first of the zone's parents, as [`HexA7::parents`] lists them, that is itself a
+    /// centroid child, and `Some(None)` where none is: what
+    /// `RhombicIcosahedral7H::getZoneCentroidParent` defines (`RI7H.ec:129-138`).
+    ///
+    /// The rule applied to each parent is [`HexA7::is_centroid_child`], the last digit of its
+    /// Z7 identifier, which is what the engine's `isZoneCentroidChild` answers on these grids
+    /// (`RI7H_Z7.ec:81-103`). The engine's `getZoneCentroidParent` tests instead the geometric
+    /// property of the I7H zone, that it is the centroid child of its own primary parent
+    /// (`RI7H.ec:2978-2992`). The two rules coincide away from the broken seams and may part
+    /// within them, where the last digit is followed all the same: of the parents of
+    /// `0000000000000001644`, `000000000000000005` and `000000000000000000`, the second is
+    /// answered. An identifier that the engine cannot read back is not among the parents
+    /// here, and so is never the centroid parent, though it may end in 0 and stand first in
+    /// the engine's list.
+    ///
+    /// A departure from the engine: its `getZoneCentroidParent` answered the null zone at
+    /// every zone of these grids at which it was asked. That function asks for the zone's
+    /// parents through the class of the grid (`RI7H.ec:132`), whose own `getZoneParents`
+    /// then reads the I7H identifier it is handed as a Z7 one (`RI7H_Z7.ec:540-543`,
+    /// `:550-556`). The definition is followed here, not that outcome.
+    fn centroid_parent(a: &Address) -> Option<Option<Address>> {
+        let parents = Self::parents(a)?;
+        Some(
+            parents
+                .into_iter()
+                .find(|p| Self::is_centroid_child(p) == Some(true)),
+        )
+    }
+
+    /// Whether the zone is a centroid child, as `Z7Zone::isCentroidChild` reads the
+    /// identifier (`RI7H_Z7.ec:81-103`): its last digit is 0. A zone of level 0 has no
+    /// digit and is none, and an address that fails [`HexA7::is_valid_address`] is none
+    /// either. An address of the twentieth level is read by its last digit as any other,
+    /// as the engine reads it, although it has no parent.
+    fn is_centroid_child(a: &Address) -> Option<bool> {
+        Some(Self::is_valid_address(a) && a.digits().last() == Some(&0))
+    }
+
+    /// The aperture-7 grids order their sub-zones as `I7HZone::iterateI7HSubZones` generates
+    /// them (`RI7H.ec:3260-3705`): in scanlines across the zone, from the vertex of it that
+    /// stands uppermost on the icosahedral net.
+    const HAS_SUB_ZONE_ORDER: bool = true;
+
+    /// The number of sub-zones `depth` levels below the zone, as the engine's `countSubZones`
+    /// answers (`RI7H_Z7.ec:492-500`, the closed form of `getSubZonesCount` at
+    /// `RI7H.ec:3063-3116`): for a hexagon `7^d + 5 * 7^((d - 1) / 2) + 1` at an odd depth `d`
+    /// and `7^d + 7^(d / 2) - 1` at an even one, which is 13 at depth 1 and 55 at depth 2; for
+    /// a pentagon five sixths of that, raised to the next integer, 11 and 46; and 1 at depth 0.
+    ///
+    /// `None` where the sub-zones would lie beyond level 19, the finest that has geometry,
+    /// which `Grid` refuses first, and for an address that fails
+    /// [`HexA7::is_valid_address`]: so this method and the three below answer every address at
+    /// every depth, on a direct call as well.
+    fn count_sub_zones(a: &Address, depth: u8) -> Option<u64> {
+        hex_a7_subzones::count(a, depth)
+    }
+
+    /// The first sub-zone `depth` levels below the zone, in the engine's order, as its
+    /// `getFirstSubZone` answers (`RI7H_Z7.ec:576-579`, `RI7H.ec:3118-3124`): the centroid
+    /// beside the zone's uppermost vertex, quantised at the sub-zone level. `None` as for
+    /// [`HexA7::count_sub_zones`].
+    ///
+    /// Where no zone holds that centroid, which happens only in the broken seams, the answer
+    /// is `Some` of the address that the Z7 packing writes as its null identifier (base cell
+    /// 15 and no digit), never `None`: the order has an entry there, and the entry is no zone.
+    ///
+    /// Two departures from the engine. At depth 0 this answers the zone itself, as `Grid` does
+    /// before it asks, where the engine names a neighbour at most zones. And at the pentagon
+    /// of the south pole (base cell 11, every digit 0) at an odd level, at depth 2, where the
+    /// engine's call ends the process, turning a direction that it was not given
+    /// (`RI7H.ec:3246-3255`), this answers the first entry of the order.
+    fn first_sub_zone(a: &Address, depth: u8) -> Option<Address> {
+        hex_a7_subzones::first_sub_zone(a, depth)
+    }
+
+    /// Every sub-zone `depth` levels below the zone, in the engine's order, as its
+    /// `getSubZones` answers (`dggrs.ec:195-222`, through `getSubZoneCRSCentroids` at
+    /// `RI7H.ec:615-644`): the sub-zone centroids, generated as the engine generates them,
+    /// each quantised at the sub-zone level. The order is the engine's at every zone, entry
+    /// for entry; nothing in it is corrected.
+    ///
+    /// An entry is the address that the Z7 packing writes as its null identifier where the
+    /// engine's entry is its null zone or an identifier that it cannot read back, which
+    /// happens only in the broken seams, along the edges from base cell 0 to 1 and from 1 to
+    /// 6, among sub-zones of level 15 and finer. The length of the order and the place of
+    /// every other entry are the engine's, and whatever else its order holds there is kept:
+    /// a zone named twice, a zone that is no descendant of this one.
+    ///
+    /// `None` as for [`HexA7::count_sub_zones`], and above
+    /// [`crate::grid::max_materialised_sub_zones`], which `Grid` refuses before it asks, so
+    /// that a direct caller of this trait method cannot materialise gigabytes of addresses
+    /// either. The engine's own list ends the process from `2^28` centroids, and answers
+    /// nothing from `2^32`.
+    fn sub_zones(a: &Address, depth: u8) -> Option<Vec<Address>> {
+        hex_a7_subzones::sub_zones(a, depth)
+    }
+
+    /// The sub-zone at `index`, `depth` levels below the zone, found through the generator's
+    /// own search, without building [`HexA7::sub_zones`]'s whole sequence: it reckons the
+    /// width of every scanline before the one that holds the index, some
+    /// `(10 / 3) * 7^(depth / 2)` of them at most, and generates one centroid. Ports
+    /// `getSubZoneAtIndex` (`RI7H.ec:241-256`), and is not limited by the length of the order.
+    ///
+    /// One departure from the engine: at a pentagon, at an odd depth, the engine's function
+    /// answers another zone than its `getSubZones` lists at that index, from the scanline
+    /// after the pentagon's own (it reads a width that it recorded only while generating that
+    /// scanline, `RI7H.ec:3401-3402`). Here the answer is the entry of the order at every
+    /// index. A second, at depth 0, where this answers the zone itself: see
+    /// [`HexA7::first_sub_zone`].
+    ///
+    /// `None` as for [`HexA7::count_sub_zones`], and at an `index` at or beyond the count; a
+    /// direct caller of this trait method must tell those apart from "no override" itself, as
+    /// [`crate::Topology::sub_zone_at_index`] documents. An entry that is no zone is answered
+    /// as in [`HexA7::sub_zones`].
+    fn sub_zone_at_index(a: &Address, depth: u8, index: u64) -> Option<Address> {
+        hex_a7_subzones::sub_zone_at_index(a, depth, index)
+    }
+
+    /// The index of `sub` in the order of the sub-zones of `parent`, by the engine's own walk,
+    /// `getSubZoneIndex` (`RI7H_Z7.ec:599-602`, `RI7H.ec:224-239`): the zone must pass the
+    /// engine's test of a sub-zone, `zoneHasSubZone` (`RI7H.ec:258-308`), and the index is that
+    /// of the first centroid of the order, generated from its head, that lies within 1e-11 of
+    /// the zone's own in each coordinate. `Some(None)` where the test refuses the zone or no
+    /// centroid lies so near, which in the broken seams happens to zones that the order names.
+    ///
+    /// The walk compares centroids, and the order holds the zones that the quantiser makes of
+    /// them: `Grid` answers the index only where the entry of the order there is `sub`.
+    ///
+    /// Two departures from the engine, both the crate's own rule at `Grid`: of two zones of
+    /// one level a zone is its own sub-zone at index 0 and no other is, where the engine
+    /// answers 0 for any two; and the walk is not made over an order longer than
+    /// [`crate::grid::max_materialised_sub_zones`], since it costs one centroid for each entry
+    /// before the one sought. `None` there, for an address that fails
+    /// [`HexA7::is_valid_address`], and for a `sub` beyond level 19.
+    fn sub_zone_index(parent: &Address, sub: &Address) -> Option<Option<u64>> {
+        hex_a7_subzones::sub_zone_index(parent, sub)
+    }
+
     /// True when this address has no geometry at all, DGGAL's `nullZone` outcome.
     ///
     /// Z7 level 20 is representable, since the 64-bit packing has twenty
@@ -3142,6 +4219,115 @@ impl Topology for HexA7 {
                 y: vy,
             })
             .collect()
+    }
+
+    /// The ring of [`HexA7::planar_refined_ring`] as `getRefinedVertices` asks it of the zone
+    /// for WGS84, with `crs84` true (`RI7H.ec:544`).
+    fn planar_refined_vertices(a: &Address, n_divisions: i32) -> Option<Vec<(f64, f64)>> {
+        Some(Self::planar_refined_ring(a, true, n_divisions))
+    }
+
+    /// `7^(level / 2)` cells along a rhombus: the grid of the even level at or below `level`,
+    /// whose index within a rhombus is `row * 7^levelI49R + col` (`RI7H.ec:866-871`). Nought
+    /// beyond level 19.
+    fn lattice_edge(level: u8) -> u64 {
+        if usize::from(level) >= NULL_GEOMETRY_LEVEL {
+            return 0;
+        }
+        pow7(i64::from(level / 2)) as u64
+    }
+
+    /// The zones of one cell of a rhombus: one at an even level; at an odd level its seven
+    /// sub-hexagons, or six in the cell at row 0 and column 0, which is a pentagon's
+    /// (`RI7H.ec:866-871`). Each comes with the value of its `I7HZone`, the key of the engine's
+    /// order, which is not that of the Z7 identifiers: see `i7h_value`.
+    fn cell_zones(level: u8, root: u8, row: u64, col: u64) -> Vec<(Address, u64)> {
+        let p = Self::lattice_edge(level);
+        if root > 9 || row >= p || col >= p {
+            return Vec::new();
+        }
+        lattice_cell(level, root, row, col)
+    }
+
+    /// The zones of a polar root: the polar pentagon at an even level, its six sub-hexagons at
+    /// an odd one, the roots 10 and 11 of `rootRhombus` (`RI7H.ec:866-871`).
+    fn polar_zones(level: u8, root: u8) -> Vec<(Address, u64)> {
+        if usize::from(level) >= NULL_GEOMETRY_LEVEL || !(10..=11).contains(&root) {
+            return Vec::new();
+        }
+        lattice_cell(level, root, 0, 0)
+    }
+
+    /// The root, the row and the column of the I7H zone that the address reads to, as the eC's
+    /// `to7H` reads it (`RI7H_Z7.ec:298-370`), and the value of that zone.
+    ///
+    /// `None` for an address that [`HexA7::is_valid_address`] refuses, for one of twenty digits,
+    /// for one that names the child a pentagon does not have, and for any other that the cell it
+    /// reads to does not host under that address: an answer is given exactly where
+    /// `cell_zones` or `polar_zones` at the place answered holds `a`.
+    fn locate(a: &Address) -> Option<(u8, u64, u64, u64)> {
+        if !Self::is_valid_address(a) || Self::is_null_geometry(a) {
+            return None;
+        }
+        let z = zone_from_steps(a.base, a.digits());
+        let (hosted, key) = lattice_zone(a.len() as u8, z)?;
+        (hosted == *a).then_some((z.root as u8, z.row as u64, z.col as u64, key))
+    }
+
+    /// The engine's `compactZones` on these grids (`RI7H_Z7.ec:581-597`): each zone taken to
+    /// its I7H form, the set compacted there by the function `compact` of this module, and
+    /// each zone of the answer converted back to Z7, in the order of the I7H values, which is
+    /// that of the lattice within a level and not that of the Z7 identifiers.
+    ///
+    /// The two conversions are the engine's, so that the answer names each zone as the engine
+    /// names it: an address that the engine reads as another zone, the child a pentagon does
+    /// not have or an address of a broken seam, comes back as the address of that zone. An
+    /// address of twenty digits is the null zone to the eC's `to7H` (`RI7H_Z7.ec:348-352`),
+    /// which the set leaves out, and it is left out here.
+    ///
+    /// A departure from the engine: a zone of the answer for which `from_7h` answers nothing,
+    /// where the engine prints an identifier that it cannot read back, is left out, as this
+    /// crate never hands such an identifier out. It was met in the broken seams alone, at
+    /// addresses of levels 17 and 19 built from digits, which are not the zone found at their
+    /// own centroid, and at no set made of zones found from positions. Two zones are besides
+    /// beyond the grid, the last two of the twelve that the short cut of that function builds,
+    /// which the engine converts to its null zone and no set of one level reaches.
+    fn compact(zones: &[Address]) -> Option<Vec<Address>> {
+        let zones: Vec<Z> = zones
+            .iter()
+            .filter(|a| !Self::is_null_geometry(a))
+            .map(|a| zone_from_steps(a.base, a.digits()))
+            .collect();
+        Some(
+            compact(&zones)
+                .iter()
+                .filter_map(|z| Some(z7_address(from_7h(z)?, zone_level(z))))
+                .collect(),
+        )
+    }
+}
+
+impl HexA7 {
+    /// The zone's refined boundary in the 5x6 plane, before any projection: the ring of
+    /// `I7HZone::getBaseRefinedVertices(crs84, nDivisions)` (`RI7H.ec:2167-2331`), ported as
+    /// [`get_base_refined_vertices`], for the zone the address names. `crs84` is true where the
+    /// ring is bound for WGS84 and false where it stays in the 5x6 CRS, and `n_divisions` is the
+    /// eC's `int`, the number of parts each edge is divided into.
+    ///
+    /// The address must name a zone with geometry. A Z7 identifier of level 20 is the null zone
+    /// to the eC's `to7H` (`RI7H_Z7.ec:348-352`), which this function cannot be handed: the
+    /// caller answers for it first, as it does before [`HexA7::planar_vertices`].
+    ///
+    /// # Panics
+    ///
+    /// `a` must satisfy [`HexA7::is_valid_address`], on the same terms as for
+    /// [`HexA7::planar_centroid`].
+    pub(crate) fn planar_refined_ring(
+        a: &Address,
+        crs84: bool,
+        n_divisions: i32,
+    ) -> Vec<(f64, f64)> {
+        get_base_refined_vertices(&zone_from_steps(a.base, a.digits()), crs84, n_divisions)
     }
 }
 
@@ -3562,6 +4748,237 @@ mod tests {
         assert_eq!(ODD_HEX_C.to_bits(), 0x3fd5_5555_5555_5555);
         assert_eq!(ODD_HEX_A.to_bits(), 0x3ff5_5555_5555_5555);
         assert_eq!(ODD_HEX_B.to_bits(), 0x3ffa_aaaa_aaaa_aaab);
+
+        // 0x4a110 and 0x4a118, the even offsets `getBaseRefinedVertices` scales by, at
+        // 0x2930f and 0x2930b.
+        assert_eq!(EVEN_HEX_A.to_bits(), 0x4002_aaaa_aaaa_aaab);
+        assert_eq!(EVEN_HEX_B.to_bits(), 0x4012_aaaa_aaaa_aaab);
+        // 0x4a128 and 0x4a130, the two bounds of the fold it applies to the centroid, compared
+        // at 0x292d1 and 0x294c0.
+        assert_eq!((6.0f64 + 1e-9).to_bits(), 0x4018_0000_0011_2e0c);
+        assert_eq!((5.0f64 + 1e-9).to_bits(), 0x4014_0000_0011_2e0c);
+    }
+
+    /// Every site of the four polar arms, by the levels at which the member as the eC writes
+    /// it is another double than the one the library computes, and [`polar_pentagon_sides`]
+    /// with it. `oonp` takes ten values, one to each level of an arm, so the levels below are
+    /// the whole of the matter: a site with none cannot change an answer, and is ported as
+    /// compiled all the same; a site with some is pinned by the engine's rings at one of them,
+    /// in `POLAR_RINGS`. The joint switch for ON-2 and ON-3 is told apart here: `ab`
+    /// alone parts from the eC's order, and `d` nowhere.
+    ///
+    /// The members the compiler folded to whole numbers are compared with the words of the
+    /// library as well: one at `.rodata` `0x49a70`, four at `0x49a80`, six at `0x49a88`, and
+    /// the zero stored at `0x299af`.
+    #[test]
+    fn the_polar_arms_part_from_the_ecs_order_at_the_recorded_levels_alone() {
+        use std::collections::BTreeMap;
+        type Points = [(f64, f64)];
+        let r = 1.0 / 5.0;
+        let turns = |shifted: &dyn Fn(f64) -> (f64, f64)| [0.0, 1.0, 2.0, 3.0, 4.0].map(shifted);
+        let mut parted: BTreeMap<&str, Vec<i64>> = BTreeMap::new();
+        let mut compare = |site: &'static str, level: i64, compiled: &Points, source: &Points| {
+            let levels = parted.entry(site).or_default();
+            assert_eq!(compiled.len(), source.len());
+            if compiled
+                .iter()
+                .zip(source)
+                .any(|(a, b)| a.0.to_bits() != b.0.to_bits() || a.1.to_bits() != b.1.to_bits())
+            {
+                levels.push(level);
+            }
+        };
+        // A member alone, the other held at zero.
+        let xs = |points: &Points| points.iter().map(|p| (p.0, 0.0)).collect::<Vec<_>>();
+        let ys = |points: &Points| points.iter().map(|p| (0.0, p.1)).collect::<Vec<_>>();
+
+        for l49r in 0..=9 {
+            let oonp = 1.0 / (7 * pow7(l49r)) as f64;
+            let (even, odd) = (2 * l49r, 2 * l49r + 1);
+
+            // Even north, as the eC writes it (RI7H.ec:2189-2202).
+            let (a_p, b_p) = (oonp * EVEN_HEX_A, oonp * EVEN_HEX_B);
+            let a = (1.0 - b_p, 0.0 - a_p);
+            let b = (1.0 - a_p, 0.0 + a_p);
+            let ab = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+            let offset = rotate5x6_offset(b.0 - ab.0, b.1 - ab.1, false);
+            let d = (offset.0 + b.0, offset.1 + b.1);
+            let north = polar_pentagon_sides(0xA, false, oonp).expect("the north pole");
+            compare("EN-1", even, &north.b, &turns(&|k| (b.0 + k, b.1 + k)));
+            compare(
+                "EN-2",
+                even,
+                &xs(&north.ab),
+                &xs(&turns(&|k| (ab.0 + k, 0.0))),
+            );
+            compare(
+                "EN-3",
+                even,
+                &ys(&north.ab),
+                &ys(&turns(&|k| (0.0, ab.1 + k))),
+            );
+            compare(
+                "EN-4",
+                even,
+                &xs(&north.d),
+                &xs(&turns(&|k| (d.0 + k, 0.0))),
+            );
+            compare(
+                "EN-5",
+                even,
+                &ys(&north.d),
+                &ys(&turns(&|k| (0.0, d.1 + k))),
+            );
+            assert_eq!(north.ab[0].1.to_bits(), 0, "EN-3 at level {even}");
+            assert_eq!(north.d[0].0.to_bits(), 0x3ff0_0000_0000_0000, "EN-4");
+
+            // Even south (RI7H.ec:2215-2229).
+            let a = (4.0 + b_p, 6.0 + a_p);
+            let b = (4.0 + a_p, 6.0 - a_p);
+            let ab = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+            let offset = rotate5x6_offset(b.0 - ab.0, b.1 - ab.1, false);
+            let d = (offset.0 + b.0, offset.1 + b.1);
+            let south = polar_pentagon_sides(0xB, false, oonp).expect("the south pole");
+            compare("ES-1", even, &south.b, &turns(&|k| (b.0 - k, b.1 - k)));
+            compare(
+                "ES-2",
+                even,
+                &xs(&south.ab),
+                &xs(&turns(&|k| (ab.0 - k, 0.0))),
+            );
+            compare(
+                "ES-3",
+                even,
+                &ys(&south.ab),
+                &ys(&turns(&|k| (0.0, ab.1 - k))),
+            );
+            compare(
+                "ES-4",
+                even,
+                &xs(&south.d),
+                &xs(&turns(&|k| (d.0 - k, 0.0))),
+            );
+            compare(
+                "ES-5",
+                even,
+                &ys(&south.d),
+                &ys(&turns(&|k| (0.0, d.1 - k))),
+            );
+            assert_eq!(south.ab[0].1.to_bits(), 0x4018_0000_0000_0000, "ES-3");
+            assert_eq!(south.d[0].0.to_bits(), 0x4010_0000_0000_0000, "ES-4");
+
+            // Odd north (RI7H.ec:2266-2277).
+            let (a_p, b_p, c_p) = (oonp * ODD_HEX_A, oonp * ODD_HEX_B, oonp * ODD_HEX_C);
+            let a = (1.0 - b_p, 0.0 - c_p);
+            let b = (1.0 - c_p, 0.0 + a_p);
+            let ab = (a.0 + (b.0 - a.0) * r, a.1 + (b.1 - a.1) * r);
+            let c = (1.0 + a_p, 0.0 + b_p);
+            let d = (b.0 + (c.0 - b.0) * r, b.1 + (c.1 - b.1) * r);
+            let north = polar_pentagon_sides(0xA, true, oonp).expect("the north pole");
+            compare("ON-1", odd, &north.b, &turns(&|k| (b.0 + k, b.1 + k)));
+            compare("ON-2", odd, &north.ab[..1], &[ab]);
+            compare("ON-3", odd, &north.d, &turns(&|k| (d.0 + k, d.1 + k)));
+            // ON-4 is of the shift alone: the eC's `ab + k`, on the library's own `ab`.
+            let shifted = turns(&|k| (north.ab[0].0 + k, north.ab[0].1 + k));
+            compare("ON-4", odd, &north.ab[1..2], &shifted[1..2]);
+            compare(
+                "ab + k beyond the first turn",
+                odd,
+                &north.ab[2..],
+                &shifted[2..],
+            );
+
+            // Odd south (RI7H.ec:2291-2302).
+            let a = (4.0 + b_p, 6.0 + c_p);
+            let b = (4.0 + c_p, 6.0 - a_p);
+            let ab = (a.0 + (b.0 - a.0) * r, a.1 + (b.1 - a.1) * r);
+            let c = (4.0 - a_p, 6.0 - b_p);
+            let d = (b.0 + (c.0 - b.0) * r, b.1 + (c.1 - b.1) * r);
+            let south = polar_pentagon_sides(0xB, true, oonp).expect("the south pole");
+            compare("OS-1", odd, &south.b, &turns(&|k| (b.0 - k, b.1 - k)));
+            compare("OS-2", odd, &south.d, &turns(&|k| (d.0 - k, d.1 - k)));
+            compare("ab - k", odd, &south.ab, &turns(&|k| (ab.0 - k, ab.1 - k)));
+        }
+
+        let every_even: Vec<i64> = (0..=18).step_by(2).collect();
+        let every_odd: Vec<i64> = (1..=19).step_by(2).collect();
+        let recorded: BTreeMap<&str, Vec<i64>> = [
+            ("EN-1", vec![0, 4, 10, 16]),
+            ("EN-2", vec![]),
+            ("EN-3", vec![]),
+            ("EN-4", vec![]),
+            ("EN-5", every_even.clone()),
+            ("ES-1", every_even),
+            ("ES-2", vec![]),
+            ("ES-3", vec![]),
+            ("ES-4", vec![]),
+            ("ES-5", vec![]),
+            ("ON-1", vec![3, 9, 15, 19]),
+            ("ON-2", vec![1, 9, 15]),
+            ("ON-3", vec![]),
+            ("ON-4", vec![11, 13, 19]),
+            ("ab + k beyond the first turn", vec![]),
+            ("OS-1", every_odd),
+            ("OS-2", vec![]),
+            ("ab - k", vec![]),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(parted, recorded);
+    }
+
+    /// The emission towards WGS84, which the engine's planar accessor never asks for (it
+    /// passes `crs84` false): the fifth side of a polar pentagon is then divided as the other
+    /// four are, from the fifth corner back to the first across the interruption between
+    /// `d + 4` and `ab` (RI7H.ec:2201-2202 and its three fellows). The ring is rebuilt here
+    /// from the points of the ring in the 5x6 CRS, which the engine's own rings pin, one
+    /// zone to an arm; the comparison with the engine is that of the projected ring.
+    #[test]
+    fn towards_wgs84_the_fifth_side_of_a_polar_pentagon_is_divided_as_the_others() {
+        use crate::Indexing as _;
+        for text in ["0000", "00000", "1100", "11000"] {
+            let id = crate::indexings::Z7::from_text(text).expect("a canonical identifier");
+            let address = crate::indexings::Z7::decode(id);
+            // `b`, `d` and the next `ab` of each of four sides, then `b + 4`, `d + 4`, the two
+            // images of the pole, and `ab`.
+            let planar = HexA7::planar_refined_ring(&address, false, 1);
+            assert_eq!(planar.len(), 17, "{text}");
+            for n in [1, 2, 12] {
+                let mut expected: Vec<(f64, f64)> = Vec::new();
+                for k in 0..4 {
+                    add_intermediate_points(
+                        &mut expected,
+                        planar[3 * k],
+                        planar[3 * k + 3],
+                        n,
+                        Some((planar[3 * k + 1], planar[3 * k + 2])),
+                        true,
+                    );
+                }
+                add_intermediate_points(
+                    &mut expected,
+                    planar[12],
+                    planar[0],
+                    n,
+                    Some((planar[13], planar[16])),
+                    true,
+                );
+                let ring = HexA7::planar_refined_ring(&address, true, n);
+                assert_eq!(ring.len(), expected.len(), "{text} at {n} divisions");
+                for (i, (a, b)) in ring.iter().zip(&expected).enumerate() {
+                    assert!(
+                        a.0.to_bits() == b.0.to_bits() && a.1.to_bits() == b.1.to_bits(),
+                        "{text} at {n} divisions: point {i} is {a:?} for {b:?}"
+                    );
+                }
+            }
+            // At one division the ring towards WGS84 is the five corners and nothing else.
+            assert_eq!(
+                HexA7::planar_refined_ring(&address, true, 1),
+                [planar[0], planar[3], planar[6], planar[9], planar[12]],
+                "{text}"
+            );
+        }
     }
 
     /// `pymin` is the library's `minsd`, which answers its second operand on a tie
@@ -3649,6 +5066,17 @@ mod tests {
     /// The exception is pinned by zone, index and both bit patterns, so that it
     /// cannot silently become two.
     ///
+    /// That difference is the site the port of the allocating copy names ON-4, in
+    /// [`polar_pentagon_sides`]: there the library puts the whole number inside the bracket
+    /// at the first turn about the pole alone (`0x2a4cb`), and keeps the eC's `ab + k` at the
+    /// second, third and fourth (`0x2a579`, `0x2a60c`, `0x2a658`). At this zone the two forms
+    /// give the same double at the second and third turns and part at the fourth, which is
+    /// vertex 11. Since the refined boundary was ported this crate ports both copies: [`get_base_refined_vertices`]
+    /// answers the accessor's own value here, and the test that follows this one compares
+    /// that copy with the accessor exactly, at every level and division. This test is kept
+    /// beside it as the guard of the `NoAlloc` copy, on which
+    /// `containsPoint` rests, and as the record of the one site at which the two copies part.
+    ///
     /// What the test actually guards was checked by reverting each ported order in
     /// turn and seeing whether this test failed. Four of the seven in this path are
     /// caught: the cancellation of the centroid out of the first direction, the
@@ -3717,7 +5145,7 @@ mod tests {
                     dggal_oracle::NULL_ZONE,
                     "{oracle} does not know {text}"
                 );
-                let theirs = dggal_oracle::refined_crs_vertices_5x6(oracle, theirs_id);
+                let theirs = dggal_oracle::refined_crs_vertices_5x6(oracle, theirs_id, 1);
                 assert!(!theirs.is_empty(), "{oracle} {text}: no refined vertices");
 
                 if ours.len() != theirs.len() {
@@ -3760,17 +5188,595 @@ mod tests {
         }
     }
 
+    /// The edge divisions at which the planar ring is compared with the engine's: none, one,
+    /// two, and the three that `getRefinedVertices` chooses by level when it is asked for the
+    /// automatic refinement (`RI7H.ec:542-543`: twenty below level 3, fifteen below level 5,
+    /// twelve from there on).
+    #[cfg(feature = "oracle")]
+    const PLANAR_REFINEMENTS: [i32; 6] = [0, 1, 2, 12, 15, 20];
+
+    /// Where this crate's planar ring of the zone `id`, at `n` divisions and in the 5x6 CRS,
+    /// leaves the engine's: `None` where the two are the same sequence of the same doubles.
+    /// The engine's is `getZoneRefinedCRSVertices` in the 5x6 CRS, which is
+    /// `getBaseRefinedVertices(false, n)` itself (`RI7H.ec:3887`).
+    #[cfg(feature = "oracle")]
+    fn planar_ring_difference(oracle: &str, id: u64, n: i32) -> Option<String> {
+        use crate::Indexing as _;
+        let zone = crate::ZoneId(id);
+        let ours = HexA7::planar_refined_ring(&crate::indexings::Z7::decode(zone), false, n);
+        let theirs = dggal_oracle::refined_crs_vertices_5x6(oracle, id, n);
+        let text = crate::indexings::Z7::to_text(zone);
+        if ours.len() != theirs.len() {
+            return Some(format!(
+                "{oracle} {text} ({id:#018x}) at {n} divisions: {} points, the engine has {}",
+                ours.len(),
+                theirs.len()
+            ));
+        }
+        ours.iter()
+            .zip(&theirs)
+            .position(|(a, b)| a.0.to_bits() != b.0.to_bits() || a.1.to_bits() != b.1.to_bits())
+            .map(|i| {
+                format!(
+                    "{oracle} {text} ({id:#018x}) at {n} divisions: point {i} of {} is {:?}, \
+                     the engine has {:?}",
+                    ours.len(),
+                    ours[i],
+                    theirs[i]
+                )
+            })
+    }
+
+    /// The planar ring of the refined boundary against the engine's own, before any
+    /// projection: a stage oracle.
+    ///
+    /// `getZoneRefinedCRSVertices` in the 5x6 CRS returns `getBaseRefinedVertices(false, n)`
+    /// as it stands (`RI7H.ec:3887`), so the walker, the even-level tables, the four polar arms
+    /// and `add_intermediate_points` beneath them are compared here bit for bit, as sequences,
+    /// with nothing of the inverse projection between this crate and the engine. The ring is
+    /// the same on the three grids, which share the 5x6 plane; all three are asked, since each
+    /// quantises the sampled points to zones of its own.
+    ///
+    /// The zones: every zone to level 3, taken from the engine's own lists of children; the
+    /// zones that pin each compiled-order site and one zone of each kind, the degenerate ones
+    /// among them (`PINNED_ZONES`); the six digit patterns of the test above under six base
+    /// cells at every level to 19, which holds both polar pentagons at all twenty levels; and,
+    /// at every level, the zones of both poles and of points beside them, of the antimeridian,
+    /// of the meridian of the icosahedron's first vertex and of a fixed pseudo-random set.
+    ///
+    /// What the flag `crs84` changes (the fifth side of a polar pentagon, the interruption
+    /// points at one division, the pole rule's first clause) this accessor never asks, since
+    /// it passes false; that emission is compared through the projected ring, in the suites.
+    #[test]
+    #[cfg(feature = "oracle")]
+    fn the_planar_refined_ring_is_the_engines_at_every_level_and_refinement() {
+        use std::collections::BTreeSet;
+
+        const BASES: [&str; 6] = ["00", "01", "04", "06", "09", "11"];
+        const PATTERNS: [&str; 6] = [
+            "0000000000000000000",
+            "1313131313131313131",
+            "3232323232323232323",
+            "4141414141414141414",
+            "6060606060606060606",
+            "1456013456013456013",
+        ];
+        // Both poles and points beside them, the antimeridian, and the meridian of the
+        // icosahedron's first vertex with its antimeridian, which together are the edge that
+        // runs over the north pole: after the suites' `adversarial_points`.
+        const SPECIAL: [(f64, f64); 24] = [
+            (90.0, 0.0),
+            (-90.0, 0.0),
+            (89.9999999, 0.0),
+            (-89.9999999, 0.0),
+            (89.9999999, 11.2),
+            (-89.9999999, -168.8),
+            (89.99, 101.2),
+            (-89.99, -78.8),
+            (0.0, 180.0),
+            (0.0, -180.0),
+            (45.0, 180.0),
+            (-45.0, -180.0),
+            (-80.0, 11.2),
+            (-45.0, 11.2),
+            (-10.0, 11.2),
+            (10.0, 11.2),
+            (45.0, 11.2),
+            (80.0, 11.2),
+            (-80.0, -168.8),
+            (-45.0, -168.8),
+            (-10.0, -168.8),
+            (10.0, -168.8),
+            (45.0, -168.8),
+            (80.0, -168.8),
+        ];
+        const RANDOM_POINTS_A_LEVEL: usize = 150;
+
+        // (grid, zones compared, coordinates compared)
+        let mut compared: Vec<(&str, usize, usize)> = Vec::new();
+        for oracle in [
+            dggal_oracle::IGEO7,
+            dggal_oracle::IVEA7H,
+            dggal_oracle::RTEA7H,
+        ] {
+            let mut zones: BTreeSet<u64> = BTreeSet::new();
+
+            // Every zone to level 3: the twelve base cells and three generations of the
+            // engine's own children.
+            let mut generation: BTreeSet<u64> = (0..12)
+                .map(|base| dggal_oracle::zone_from_text(oracle, &format!("{base:02}")))
+                .collect();
+            for _ in 0..3 {
+                zones.extend(&generation);
+                generation = generation
+                    .iter()
+                    .flat_map(|&zone| dggal_oracle::children(oracle, zone))
+                    .collect();
+            }
+            zones.extend(&generation);
+            assert!(!zones.contains(&dggal_oracle::NULL_ZONE));
+            assert_eq!(
+                zones.len(),
+                12 + 72 + 492 + 3432,
+                "{oracle}: the zones to level 3"
+            );
+
+            zones.extend(PINNED_ZONES.iter().flat_map(|(_, pinned)| pinned.iter()));
+
+            for base in BASES {
+                for pattern in PATTERNS {
+                    for level in 0..=19 {
+                        let text = format!("{base}{}", &pattern[..level]);
+                        let id = dggal_oracle::zone_from_text(oracle, &text);
+                        assert_ne!(id, dggal_oracle::NULL_ZONE, "{oracle} cannot read {text}");
+                        zones.insert(id);
+                    }
+                }
+            }
+
+            // A fixed pseudo-random set: a linear congruential generator, whose high bits
+            // give a latitude and a longitude in degrees.
+            let mut state: u64 = 0x2026_1001;
+            let mut uniform = || {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                (state >> 11) as f64 / (1u64 << 53) as f64
+            };
+            for level in 0..=19 {
+                let random: Vec<(f64, f64)> = (0..RANDOM_POINTS_A_LEVEL)
+                    .map(|_| (180.0 * uniform() - 90.0, 360.0 * uniform() - 180.0))
+                    .collect();
+                for &(lat, lon) in SPECIAL.iter().chain(&random) {
+                    let id = dggal_oracle::zone_from_geo(oracle, lat, lon, level);
+                    assert_ne!(
+                        id,
+                        dggal_oracle::NULL_ZONE,
+                        "{oracle}: no zone at ({lat}, {lon}), level {level}"
+                    );
+                    zones.insert(id);
+                }
+            }
+
+            let mut coordinates = 0usize;
+            let mut levels = [0usize; 20];
+            // The kinds, counted on the ring at one division: an edge across an interruption
+            // adds its two points, and an edge under the pole rule is divided in twenty.
+            let (mut across_an_interruption, mut under_the_pole_rule) = (0usize, 0usize);
+            for &id in &zones {
+                use crate::Indexing as _;
+                let address = crate::indexings::Z7::decode(crate::ZoneId(id));
+                levels[address.len()] += 1;
+                for n in PLANAR_REFINEMENTS {
+                    if let Some(difference) = planar_ring_difference(oracle, id, n) {
+                        panic!("{difference}");
+                    }
+                    let points = HexA7::planar_refined_ring(&address, false, n).len();
+                    coordinates += 2 * points;
+                    if n == 1 {
+                        across_an_interruption += usize::from(points > 6);
+                        under_the_pole_rule += usize::from(points >= 20);
+                    }
+                }
+            }
+
+            println!(
+                "{oracle}: {} zones, {coordinates} coordinates, by level {levels:?}, \
+                 {across_an_interruption} across an interruption, {under_the_pole_rule} under \
+                 the pole rule",
+                zones.len()
+            );
+            assert!(
+                levels[4..].iter().all(|&count| count >= 200),
+                "{oracle}: zones by level {levels:?}"
+            );
+            assert!(
+                across_an_interruption >= 700 && under_the_pole_rule >= 130,
+                "{oracle}: {across_an_interruption} rings across an interruption, \
+                 {under_the_pole_rule} under the pole rule"
+            );
+            compared.push((oracle, zones.len(), coordinates));
+        }
+
+        // Asserted exactly, so that the test cannot quietly compare less than it claims.
+        assert_eq!(
+            compared,
+            [
+                (dggal_oracle::IGEO7, 7298, 4_535_378),
+                (dggal_oracle::IVEA7H, 7298, 4_535_576),
+                (dggal_oracle::RTEA7H, 7297, 4_534_602),
+            ]
+        );
+    }
+
+    /// The pinning zones on aperture 7, by the site each pins: reverted
+    /// alone to the eC's order, the site moves the planar ring of each of its zones at some
+    /// division of `PLANAR_REFINEMENTS`. The last entry holds one zone of each kind, the
+    /// degenerate ones among them, and the identifier the engine writes for a neighbour and
+    /// cannot read back.
+    #[cfg(feature = "oracle")]
+    const PINNED_ZONES: [(&str, &[u64]); 11] = [
+        // `addIntermediatePoints`, before an interruption: `0200`, `0704`, `0741`.
+        (
+            "AIP-1",
+            &[
+                0x203f_ffff_ffff_ffff,
+                0x713f_ffff_ffff_ffff,
+                0x787f_ffff_ffff_ffff,
+            ],
+        ),
+        // After an interruption: `10`, `02323`, `06040`, `00453`, `01320`.
+        (
+            "AIP-2",
+            &[
+                0xafff_ffff_ffff_ffff,
+                0x269f_ffff_ffff_ffff,
+                0x6107_ffff_ffff_ffff,
+                0x095f_ffff_ffff_ffff,
+                0x1687_ffff_ffff_ffff,
+            ],
+        ),
+        // A plain edge: `06`, `010`, `014`, `016`.
+        (
+            "AIP-3",
+            &[
+                0x6fff_ffff_ffff_ffff,
+                0x11ff_ffff_ffff_ffff,
+                0x19ff_ffff_ffff_ffff,
+                0x1dff_ffff_ffff_ffff,
+            ],
+        ),
+        // The even north polar arm: levels 0, 4 and 10; then 6, 12 and 18.
+        (
+            "EN-1",
+            &[
+                0x0fff_ffff_ffff_ffff,
+                0x0000_ffff_ffff_ffff,
+                0x0000_0000_3fff_ffff,
+            ],
+        ),
+        (
+            "EN-5",
+            &[
+                0x0000_03ff_ffff_ffff,
+                0x0000_0000_00ff_ffff,
+                0x0000_0000_0000_003f,
+            ],
+        ),
+        // The even south polar arm: levels 2, 4, 10 and 12.
+        (
+            "ES-1",
+            &[
+                0xb03f_ffff_ffff_ffff,
+                0xb000_ffff_ffff_ffff,
+                0xb000_0000_3fff_ffff,
+                0xb000_0000_00ff_ffff,
+            ],
+        ),
+        // The odd north polar arm: levels 3, 9 and 15; 1, 9 and 15; 11, 13 and 19. ON-3
+        // moves no ring, ON-2 alone moves those of levels 1, 9 and 15, and the zone of level
+        // 11 is ON-4's.
+        (
+            "ON-1",
+            &[
+                0x0007_ffff_ffff_ffff,
+                0x0000_0001_ffff_ffff,
+                0x0000_0000_0000_7fff,
+            ],
+        ),
+        (
+            "ON-2",
+            &[
+                0x01ff_ffff_ffff_ffff,
+                0x0000_0001_ffff_ffff,
+                0x0000_0000_0000_7fff,
+            ],
+        ),
+        (
+            "ON-4",
+            &[
+                0x0000_0000_07ff_ffff,
+                0x0000_0000_001f_ffff,
+                0x0000_0000_0000_0007,
+            ],
+        ),
+        // The odd south polar arm: levels 3, 5 and 9.
+        (
+            "OS-1",
+            &[
+                0xb007_ffff_ffff_ffff,
+                0xb000_1fff_ffff_ffff,
+                0xb000_0001_ffff_ffff,
+            ],
+        ),
+        // `0313522`, `0100000`, `0000000`, `110000`, `0100033`, `0132336`, `0132323`,
+        // `013232323232323232323`, `005151515151515151515`, `0000000000000000131`,
+        // `01323232323232322` and `01222222222222222220`.
+        (
+            "one of each kind",
+            &[
+                0x32ea_5fff_ffff_ffff,
+                0x1000_1fff_ffff_ffff,
+                0x0000_1fff_ffff_ffff,
+                0xb000_ffff_ffff_ffff,
+                0x1003_7fff_ffff_ffff,
+                0x169b_dfff_ffff_ffff,
+                0x169a_7fff_ffff_ffff,
+                0x169a_69a6_9a69_a69f,
+                0x0a69_a69a_69a6_9a6f,
+                0x0000_0000_0000_b3ff,
+                0x169a_69a6_9a69_7fff,
+                0x1492_4924_9249_243f,
+            ],
+        ),
+    ];
+
+    /// Each compiled-order site of the planar ring, at the zones that pin it, against the
+    /// engine. Every difference is gathered before the test fails, so that a site put back in
+    /// the eC's order names its zones in the failure.
+    #[test]
+    #[cfg(feature = "oracle")]
+    fn the_compiled_order_sites_hold_at_the_zones_that_pin_them() {
+        let mut differences: Vec<String> = Vec::new();
+        for oracle in [
+            dggal_oracle::IGEO7,
+            dggal_oracle::IVEA7H,
+            dggal_oracle::RTEA7H,
+        ] {
+            for (site, zones) in PINNED_ZONES {
+                for &id in zones {
+                    for n in PLANAR_REFINEMENTS {
+                        if let Some(difference) = planar_ring_difference(oracle, id, n) {
+                            differences.push(format!("{site}: {difference}"));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            differences.is_empty(),
+            "{} rings leave the engine's:\n{}",
+            differences.len(),
+            differences.join("\n")
+        );
+    }
+
+    /// The engine's planar rings of six polar pentagons at one division, in the 5x6 CRS
+    /// (`getZoneRefinedCRSVertices`, that is `getBaseRefinedVertices(false, 1)`), read from
+    /// DGGAL v0.0.6, BuildID `e75d6ab18f8b460713ebcd21df6f07922fb909c3`, and written out as the
+    /// shortest decimals that read back to the same doubles; they are the same on the three
+    /// grids. At one division such a ring is the arm's own points and nothing else: for each of
+    /// the first four sides `b`, `d` and the next side's `ab`, then the fifth `b` and `d`, the
+    /// two images of the pole, and the first `ab`.
+    const POLAR_RINGS: [(&str, [(f64, f64); 17]); 6] = [
+        // level 4, even, north: EN-1 and EN-5.
+        (
+            "000000",
+            [
+                (0.9931972789115646, 0.006802721088435375),
+                (1.0, 0.010204081632653073),
+                (1.989795918367347, 1.0),
+                (1.9931972789115646, 1.0068027210884354),
+                (2.0, 1.010204081632653),
+                (2.989795918367347, 2.0),
+                (2.993197278911565, 2.006802721088435),
+                (3.0, 2.010204081632653),
+                (3.989795918367347, 3.0),
+                (3.993197278911565, 3.006802721088435),
+                (4.0, 3.010204081632653),
+                (4.989795918367347, 4.0),
+                (4.993197278911564, 4.006802721088436),
+                (5.0, 4.010204081632653),
+                (5.0, 4.0),
+                (1.0, 0.0),
+                (0.9897959183673469, 0.0),
+            ],
+        ),
+        // level 6, even, north: EN-5.
+        (
+            "00000000",
+            [
+                (0.9990281827016521, 0.0009718172983479106),
+                (1.0, 0.001457725947521804),
+                (1.998542274052478, 1.0),
+                (1.999028182701652, 1.000971817298348),
+                (2.0, 1.001457725947522),
+                (2.998542274052478, 2.0),
+                (2.999028182701652, 2.000971817298348),
+                (3.0, 2.001457725947522),
+                (3.998542274052478, 3.0),
+                (3.999028182701652, 3.000971817298348),
+                (4.0, 3.001457725947522),
+                (4.998542274052478, 4.0),
+                (4.999028182701652, 4.000971817298348),
+                (5.0, 4.001457725947522),
+                (5.0, 4.0),
+                (1.0, 0.0),
+                (0.9985422740524781, 0.0),
+            ],
+        ),
+        // level 2, even, south: ES-1.
+        (
+            "1100",
+            [
+                (4.0476190476190474, 5.9523809523809526),
+                (4.0, 5.928571428571429),
+                (3.071428571428571, 5.0),
+                (3.0476190476190474, 4.9523809523809526),
+                (3.0, 4.928571428571429),
+                (2.071428571428571, 4.0),
+                (2.0476190476190474, 3.9523809523809526),
+                (2.0, 3.928571428571429),
+                (1.0714285714285712, 3.0),
+                (1.0476190476190477, 2.9523809523809526),
+                (1.0, 2.928571428571429),
+                (0.07142857142857117, 2.0),
+                (0.047619047619047616, 1.9523809523809523),
+                (0.0, 1.9285714285714288),
+                (0.0, 2.0),
+                (4.0, 6.0),
+                (4.071428571428571, 6.0),
+            ],
+        ),
+        // level 9, odd, north: ON-1 and ON-2.
+        (
+            "00000000000",
+            [
+                (0.9999801669939112, 7.933202435493147e-5),
+                (1.0, 8.329862557267805e-5),
+                (1.9999167013744272, 1.0),
+                (1.9999801669939112, 1.0000793320243548),
+                (2.0, 1.0000832986255728),
+                (2.9999167013744272, 2.0),
+                (2.9999801669939115, 2.000079332024355),
+                (3.0, 2.0000832986255728),
+                (3.9999167013744272, 3.0),
+                (3.9999801669939115, 3.000079332024355),
+                (4.0, 3.0000832986255728),
+                (4.999916701374428, 4.0),
+                (4.999980166993911, 4.000079332024355),
+                (5.0, 4.000083298625572),
+                (5.0, 4.0),
+                (1.0, 0.0),
+                (0.9999167013744273, 0.0),
+            ],
+        ),
+        // level 11, odd, north: ON-4.
+        (
+            "0000000000000",
+            [
+                (0.9999971667134159, 1.1333146336418782e-5),
+                (1.0, 1.1899803653239721e-5),
+                (1.9999881001963467, 1.0),
+                (1.999997166713416, 1.0000113331463365),
+                (2.0, 1.0000118998036533),
+                (2.999988100196347, 2.0),
+                (2.999997166713416, 2.0000113331463365),
+                (3.0, 2.000011899803653),
+                (3.999988100196347, 3.0),
+                (3.999997166713416, 3.0000113331463365),
+                (4.0, 3.000011899803653),
+                (4.999988100196346, 4.0),
+                (4.999997166713416, 4.000011333146336),
+                (5.0, 4.000011899803654),
+                (5.0, 4.0),
+                (1.0, 0.0),
+                (0.9999881001963468, 0.0),
+            ],
+        ),
+        // level 3, odd, south: OS-1.
+        (
+            "11000",
+            [
+                (4.006802721088436, 5.9727891156462585),
+                (4.0, 5.9714285714285715),
+                (3.0285714285714285, 5.0),
+                (3.006802721088435, 4.9727891156462585),
+                (3.0, 4.9714285714285715),
+                (2.0285714285714285, 4.0),
+                (2.006802721088435, 3.9727891156462585),
+                (2.0, 3.9714285714285715),
+                (1.0285714285714285, 3.0),
+                (1.0068027210884354, 2.9727891156462585),
+                (1.0, 2.9714285714285715),
+                (0.02857142857142847, 2.0),
+                (0.006802721088435373, 1.9727891156462585),
+                (0.0, 1.9714285714285715),
+                (0.0, 2.0),
+                (4.0, 6.0),
+                (4.0285714285714285, 6.0),
+            ],
+        ),
+    ];
+
+    /// The four polar arms of [`get_base_refined_vertices`] in the order the library performs
+    /// them, on the engine's own rings. Each of the seven sites of the arms that move a ring
+    /// (EN-1, EN-5, ES-1, ON-1, ON-2, ON-4 and OS-1), put back in the eC's order, fails this
+    /// test at the ring named for it in `POLAR_RINGS`; each was so put back, and seen to fail,
+    /// when the arms were ported. The test of the pinned zones says the same against the live
+    /// engine, at three zones or more a site.
+    #[test]
+    fn the_polar_arms_follow_the_compiled_order() {
+        use crate::Indexing as _;
+        let mut differences: Vec<String> = Vec::new();
+        for (text, engine) in &POLAR_RINGS {
+            let id = crate::indexings::Z7::from_text(text).expect("a canonical identifier");
+            let ours = HexA7::planar_refined_ring(&crate::indexings::Z7::decode(id), false, 1);
+            if ours.len() != engine.len() {
+                differences.push(format!("{text}: {} points for 17", ours.len()));
+                continue;
+            }
+            for (i, (a, b)) in ours.iter().zip(engine).enumerate() {
+                if a.0.to_bits() != b.0.to_bits() || a.1.to_bits() != b.1.to_bits() {
+                    differences.push(format!("{text}: point {i} is {a:?}, the engine has {b:?}"));
+                }
+            }
+        }
+        assert!(
+            differences.is_empty(),
+            "{} differences from the engine's rings:\n{}",
+            differences.len(),
+            differences.join("\n")
+        );
+    }
+
     /// Six zones deep under the polar pentagon of base cell 0, two at each of
     /// resolutions 17, 18 and 19, pinned to the engine's own doubles on each
     /// aperture-7 grid: the centroid and then the vertices, in the engine's order, as
     /// `getZoneWGS84Centroid` and `getZoneWGS84Vertices` answer them in degrees. Near
     /// the pole the geometric parent search can name a zone other than the one the
     /// walk came from, and the walk reaches these answers only by handing the rotation
-    /// offset its own two previous zones, as the eC's does. Each zone is read from its
-    /// text and is also among its parent's children, the other route by which a caller
-    /// reaches it.
+    /// offset its own two previous zones, as the eC's does.
+    ///
+    /// Each zone is read from its text, and from its text alone: these six lie in the broken
+    /// seam over the north pole, where the engine's hierarchy does not follow the digits.
+    /// None of them is among the engine's children of the zone that its text less the last
+    /// digit names, and so none is among this crate's; and the engine's `getZoneParents`
+    /// answers for them, the same on the three grids, the lists of `PARENTS`, which are
+    /// this crate's: for `0000000000000000136` the one zone `000000000000000005`, which the
+    /// engine lists twice, and for `00000000000000001311` no parent at all.
     #[test]
     fn deep_polar_zones_answer_as_the_engine() {
+        const PARENTS: [(&str, &[&str]); 6] = [
+            (
+                "0000000000000001644",
+                &["000000000000000005", "000000000000000000"],
+            ),
+            ("0000000000000000136", &["000000000000000005"]),
+            (
+                "00000000000000016522",
+                &["0000000000000000053", "0000000000000001601"],
+            ),
+            ("00000000000000001311", &[]),
+            (
+                "000000000000000013033",
+                &["00000000000000000501", "00000000000000000512"],
+            ),
+            (
+                "000000000000000000133",
+                &["00000000000000000005", "00000000000000000166"],
+            ),
+        ];
         type Pinned = [(&'static str, [(f64, f64); 7]); 6];
         const IGEO7: Pinned = [
             (
@@ -3998,13 +6004,21 @@ mod tests {
         let mut departures = Vec::new();
         for (name, pinned) in [("IGEO7", IGEO7), ("IVEA7H", IVEA7H), ("RTEA7H", RTEA7H)] {
             let grid = crate::registry::get_grid(name).unwrap();
-            for (text, engine) in pinned {
+            for ((text, engine), (parents_of, parents)) in pinned.into_iter().zip(PARENTS) {
+                assert_eq!(text, parents_of, "the two tables name the same zones");
                 let id = grid.zone_from_text(text).unwrap();
-                let parent = grid.zone_from_text(&text[..text.len() - 1]).unwrap();
+                let by_digits = grid.zone_from_text(&text[..text.len() - 1]).unwrap();
                 assert!(
-                    grid.children(parent).contains(&id),
-                    "{name} {text} is not among its parent's children"
+                    !grid.children(by_digits).contains(&id),
+                    "{name} {text} is among the children of the zone one digit shorter, where \
+                     the engine's list does not hold it"
                 );
+                let ours: Vec<String> = grid
+                    .parents(id)
+                    .into_iter()
+                    .map(|p| grid.text_id(p))
+                    .collect();
+                assert_eq!(ours, parents, "{name}: the parents of {text}");
                 let c = grid.centroid(id);
                 let ours: Vec<(f64, f64)> = std::iter::once((c.lat, c.lon))
                     .chain(grid.vertices(id).iter().map(|v| (v.lat, v.lon)))
@@ -4435,5 +6449,557 @@ mod tests {
                 got.map_err(|_| "a panic")
             );
         }
+    }
+
+    /// The parents and the children of thirteen zones, pinned on each aperture-7 grid to the
+    /// engine's own lists, `getZoneParents` and `getZoneChildren`, in its order, less the three
+    /// kinds of entry this crate never hands out: its null zone, an identifier it cannot read
+    /// back, and a repeat. The lists are the same on the three grids, which share the topology
+    /// and differ only in the projection, and each was read from each grid's engine.
+    ///
+    /// They are a hexagon, with two parents and thirteen children, the first seven of which
+    /// are the zones its text names with one digit more, in the engine's order and not in the
+    /// digits'; the polar pentagons of base cells 0 and 11 at level 0, with no parent and
+    /// eleven children, and the second at level 1; the pentagon of base cell 3 at level 2; a
+    /// centroid child, which has one parent, and one of its children; a zone of level 19,
+    /// which has no children; and five zones in the broken seam over the north pole, from
+    /// whose lists entries are left out. There the engine's lists are:
+    ///
+    /// - the children of `00052626050026015`: `[...150, ...152, ...153, ...151, ...155,
+    ///   012222222222222220, 012222222222222220, 000526260500260105, 000526260500260114,
+    ///   000526260500261626, 012222222222222220, 000526260500260533, 012222222222222220]`,
+    ///   four times an identifier the engine cannot read back, two of them among its primary
+    ///   children;
+    /// - the children of `0000000000000005`: `[...050, ...052, ...053, ...051, ...055, ...054,
+    ///   ...056, (null), (null), 00000000000000005, (null), (null), 00000000000000532]`, four
+    ///   times its null zone; and the child `00000000000000005` that is kept does not name
+    ///   the zone among its own parents, which are the one zone `0000000000000000`;
+    /// - the children of `00000000000000005`: `[...050, ...053, ...051, ...055, ...054,
+    ///   ...056, ...052, ...055, ...056, 000000000000000004, 000000000000000001,
+    ///   000000000000000010, 000000000000000522]`, two repeats;
+    /// - the children of the pentagon `0000000000000000`: `[...000, ...005, ...004, ...006,
+    ///   ...003, ...001, (null), 00000000000000016, 00000000000000061, 00000000000000052,
+    ///   00000000000000034]`, its null zone once;
+    /// - the parents of `0000000000000000136`: `[000000000000000005, 000000000000000005]`, a
+    ///   repeat, and its children: `[...520, ...522, ...523, ...521, ...525,
+    ///   00000000000000000005, 00000000000000000005, 00000000000000000515,
+    ///   00000000000000003555, 00000000000000000536, 00000000000000000005,
+    ///   01222222222222222220, 00000000000000000005]`, three repeats and an identifier the
+    ///   engine cannot read back.
+    #[test]
+    fn the_parents_and_children_are_the_engines_lists_in_order() {
+        const PINNED: [(&str, &[&str], &[&str]); 13] = [
+            (
+                "006415654636",
+                &["00641565463", "00641565462"],
+                &[
+                    "0064156546360",
+                    "0064156546361",
+                    "0064156546365",
+                    "0064156546364",
+                    "0064156546366",
+                    "0064156546362",
+                    "0064156546363",
+                    "0064156546342",
+                    "0064156546033",
+                    "0064156546251",
+                    "0064156546215",
+                    "0064156546324",
+                    "0064156546306",
+                ],
+            ),
+            (
+                "00",
+                &[],
+                &[
+                    "000", "005", "004", "006", "003", "001", "023", "053", "033", "013", "043",
+                ],
+            ),
+            (
+                "11",
+                &[],
+                &[
+                    "110", "112", "113", "111", "114", "116", "104", "074", "094", "064", "084",
+                ],
+            ),
+            (
+                "110",
+                &["11"],
+                &[
+                    "1100", "1103", "1101", "1104", "1106", "1102", "1125", "1143", "1134", "1161",
+                    "1116",
+                ],
+            ),
+            (
+                "0300",
+                &["030"],
+                &[
+                    "03000", "03003", "03001", "03005", "03004", "03006", "03016", "03052",
+                    "03043", "03061", "03034",
+                ],
+            ),
+            (
+                "0064156546360",
+                &["006415654636"],
+                &[
+                    "00641565463600",
+                    "00641565463601",
+                    "00641565463605",
+                    "00641565463604",
+                    "00641565463606",
+                    "00641565463602",
+                    "00641565463603",
+                    "00641565463616",
+                    "00641565463652",
+                    "00641565463643",
+                    "00641565463661",
+                    "00641565463625",
+                    "00641565463634",
+                ],
+            ),
+            (
+                "00641565463601",
+                &["0064156546360", "0064156546361"],
+                &[
+                    "006415654636010",
+                    "006415654636011",
+                    "006415654636015",
+                    "006415654636014",
+                    "006415654636016",
+                    "006415654636012",
+                    "006415654636013",
+                    "006415654636162",
+                    "006415654636053",
+                    "006415654636001",
+                    "006415654636035",
+                    "006415654636344",
+                    "006415654636126",
+                ],
+            ),
+            (
+                "006415654636011111111",
+                &["00641565463601111111", "00641565463612424242"],
+                &[],
+            ),
+            (
+                "00052626050026015",
+                &["0005262605002601", "0005262605002616"],
+                &[
+                    "000526260500260150",
+                    "000526260500260152",
+                    "000526260500260153",
+                    "000526260500260151",
+                    "000526260500260155",
+                    "000526260500260105",
+                    "000526260500260114",
+                    "000526260500261626",
+                    "000526260500260533",
+                ],
+            ),
+            (
+                "0000000000000005",
+                &["000000000000000", "000000000000005"],
+                &[
+                    "00000000000000050",
+                    "00000000000000052",
+                    "00000000000000053",
+                    "00000000000000051",
+                    "00000000000000055",
+                    "00000000000000054",
+                    "00000000000000056",
+                    "00000000000000005",
+                    "00000000000000532",
+                ],
+            ),
+            (
+                "00000000000000005",
+                &["0000000000000000"],
+                &[
+                    "000000000000000050",
+                    "000000000000000053",
+                    "000000000000000051",
+                    "000000000000000055",
+                    "000000000000000054",
+                    "000000000000000056",
+                    "000000000000000052",
+                    "000000000000000004",
+                    "000000000000000001",
+                    "000000000000000010",
+                    "000000000000000522",
+                ],
+            ),
+            (
+                "0000000000000000",
+                &["000000000000000"],
+                &[
+                    "00000000000000000",
+                    "00000000000000005",
+                    "00000000000000004",
+                    "00000000000000006",
+                    "00000000000000003",
+                    "00000000000000001",
+                    "00000000000000016",
+                    "00000000000000061",
+                    "00000000000000052",
+                    "00000000000000034",
+                ],
+            ),
+            (
+                "0000000000000000136",
+                &["000000000000000005"],
+                &[
+                    "00000000000000000520",
+                    "00000000000000000522",
+                    "00000000000000000523",
+                    "00000000000000000521",
+                    "00000000000000000525",
+                    "00000000000000000005",
+                    "00000000000000000515",
+                    "00000000000000003555",
+                    "00000000000000000536",
+                ],
+            ),
+        ];
+        let mut departures = Vec::new();
+        for name in ["IGEO7", "IVEA7H", "RTEA7H"] {
+            let grid = crate::registry::get_grid(name).unwrap();
+            let texts = |ids: Vec<crate::ZoneId>| -> Vec<String> {
+                ids.into_iter().map(|z| grid.text_id(z)).collect()
+            };
+            for (text, parents, children) in PINNED {
+                let id = grid.zone_from_text(text).unwrap();
+                let ours = texts(grid.parents(id));
+                if ours != parents {
+                    departures.push(format!(
+                        "{name}, the parents of {text}: ours {ours:?}, the engine's {parents:?}"
+                    ));
+                }
+                let ours = texts(grid.children(id));
+                if ours != children {
+                    departures.push(format!(
+                        "{name}, the children of {text}: ours {ours:?}, the engine's {children:?}"
+                    ));
+                }
+            }
+        }
+        assert!(
+            departures.is_empty(),
+            "{} of 78 lists depart from the engine's:\n{}",
+            departures.len(),
+            departures.join("\n")
+        );
+    }
+
+    /// `get_parents` and `get_children` answer the engine's lists before anything is left
+    /// out of them, entry for entry: `I7HZone::getParents` and `getChildren` as the engine's
+    /// `getZoneParents` and `getZoneChildren` then convert them (`RI7H_Z7.ec:550-564`). Each
+    /// entry is shown as the engine prints it, save an identifier it cannot read back, for
+    /// which `from_7h` answers nothing here: the engine prints `012222222222222220` for the
+    /// four of the second list, which was read, as the others, from the engine.
+    #[test]
+    fn the_lists_before_anything_is_left_out_are_the_engines() {
+        use crate::Indexing;
+        use crate::indexings::Z7;
+
+        const UNREADABLE: &str = "an identifier the engine cannot read back";
+        fn zone(text: &str) -> Z {
+            let digits: Vec<u8> = text.bytes().skip(2).map(|b| b - b'0').collect();
+            zone_from_steps(text[..2].parse().unwrap(), &digits)
+        }
+        fn shown(z: Option<Z>, res: usize) -> String {
+            match z.map(|z| from_7h(&z)) {
+                None => crate::NULL_TEXT.to_string(),
+                Some(None) => UNREADABLE.to_string(),
+                Some(Some(z7)) => Z7::to_text(Z7::encode(&z7_address(z7, res as i64))),
+            }
+        }
+        let children = |text: &str| -> Vec<String> {
+            get_children(&zone(text))
+                .into_iter()
+                .map(|c| shown(c, text.len() - 1))
+                .collect()
+        };
+
+        assert_eq!(
+            children("0000000000000005"),
+            [
+                "00000000000000050",
+                "00000000000000052",
+                "00000000000000053",
+                "00000000000000051",
+                "00000000000000055",
+                "00000000000000054",
+                "00000000000000056",
+                "(null)",
+                "(null)",
+                "00000000000000005",
+                "(null)",
+                "(null)",
+                "00000000000000532",
+            ]
+        );
+        assert_eq!(
+            children("00052626050026015"),
+            [
+                "000526260500260150",
+                "000526260500260152",
+                "000526260500260153",
+                "000526260500260151",
+                "000526260500260155",
+                UNREADABLE,
+                UNREADABLE,
+                "000526260500260105",
+                "000526260500260114",
+                "000526260500261626",
+                UNREADABLE,
+                "000526260500260533",
+                UNREADABLE,
+            ]
+        );
+        assert_eq!(
+            children("00000000000000005"),
+            [
+                "000000000000000050",
+                "000000000000000053",
+                "000000000000000051",
+                "000000000000000055",
+                "000000000000000054",
+                "000000000000000056",
+                "000000000000000052",
+                "000000000000000055",
+                "000000000000000056",
+                "000000000000000004",
+                "000000000000000001",
+                "000000000000000010",
+                "000000000000000522",
+            ]
+        );
+        // A zone of level 19 has no primary children, and so no children at all.
+        assert!(children("006415654636011111111").is_empty());
+
+        // The two parents the engine lists for this zone are two zones to `getParents`, which
+        // the conversion gives one identifier.
+        let text = "0000000000000000136";
+        let parents = get_parents(&zone(text));
+        assert_eq!(parents.len(), 2);
+        assert_ne!(parents[0], parents[1]);
+        let shown_parents: Vec<String> = parents
+            .into_iter()
+            .map(|p| shown(Some(p), text.len() - 3))
+            .collect();
+        assert_eq!(shown_parents, ["000000000000000005", "000000000000000005"]);
+        // A centroid child has its one parent, and a zone of level 0 none.
+        assert_eq!(get_parents(&zone("0064156546360")).len(), 1);
+        assert!(get_parents(&zone("00")).is_empty());
+    }
+
+    /// The factor by which `getParents` shortens the step towards a vertex, as the library
+    /// holds it at `0x4a120`, where the two products at `0x24710` and `0x24720` read it; the
+    /// three by which `getChildren` lengthens it is the 3.0 at `0x49b70`. They are the
+    /// constants that `get_parents` and `get_children` multiply by.
+    #[test]
+    fn the_hierarchy_factors_match_the_engines_folded_constants() {
+        assert_eq!(PARENT_STEP_FACTOR.to_bits(), 0x3fef_ae14_7ae1_47ae); // 0x4a120
+        assert_eq!(CHILD_STEP_FACTOR.to_bits(), 0x4008_0000_0000_0000); // 0x49b70
+    }
+
+    /// A zone is a centroid child where the last digit of its identifier is 0, as
+    /// `Z7Zone::isCentroidChild` reads it (`RI7H_Z7.ec:81-103`), and a zone of level 0, which
+    /// has no digit, is none. The engine's `isZoneCentroidChild` answers so for each
+    /// identifier below on the three grids, the two of twenty digits among them, which it
+    /// reads by their twentieth digit although it gives them no parent.
+    ///
+    /// The centroid parent is the first of the zone's parents that is itself a centroid
+    /// child. The engine's own `getZoneCentroidParent` on these grids answers its null zone
+    /// for every zone, which is not followed; each answer below is the first of the engine's
+    /// parents for which its `isZoneCentroidChild` holds: the first parent of
+    /// `00641565463601`, the second of `00641565463616`, whose parents are `0064156546361`
+    /// and `0064156546360`, and none for `00641565463611`, whose parents are `0064156546361`
+    /// and `0064156546304`, for the centroid child `0064156546360`, whose one parent
+    /// `006415654636` is none, and at level 0.
+    #[test]
+    fn the_centroid_child_and_the_centroid_parent_are_read_from_the_last_digit() {
+        use crate::ZoneId;
+        for name in ["IGEO7", "IVEA7H", "RTEA7H"] {
+            let grid = crate::registry::get_grid(name).unwrap();
+            let id = |text: &str| grid.zone_from_text(text).unwrap();
+            for (text, is) in [
+                ("0064156546360", true),
+                ("006415654636", false),
+                ("0064100", true),
+                ("0064156", false),
+                ("110", true),
+                ("11", false),
+                ("00", false),
+            ] {
+                assert_eq!(grid.is_centroid_child(id(text)), is, "{name} {text}");
+            }
+            // `0064156546360111111110` and `0064156546360111111111`.
+            assert!(
+                grid.is_centroid_child(ZoneId(0x0d0d_d667_8124_9248)),
+                "{name}"
+            );
+            assert!(
+                !grid.is_centroid_child(ZoneId(0x0d0d_d667_8124_9249)),
+                "{name}"
+            );
+
+            for (text, parent) in [
+                ("00641565463601", Some("0064156546360")),
+                ("00641565463616", Some("0064156546360")),
+                ("0064100", Some("006410")),
+                ("00641565463611", None),
+                ("0064156546360", None),
+                ("0064156", None),
+                ("00", None),
+            ] {
+                assert_eq!(
+                    grid.centroid_parent(id(text)).map(|p| grid.text_id(p)),
+                    parent.map(str::to_string),
+                    "{name} {text}"
+                );
+            }
+        }
+    }
+
+    /// The four methods of the hierarchy are total on a direct call through the trait, and
+    /// each answers for itself: never `None`, on which `Grid` would fall back to the digits
+    /// of the identifier. An address this topology has no cell for (a base cell of 12 or 15,
+    /// a digit of 9) and one of the twentieth level, which has no geometry, have no parents,
+    /// no children and no centroid parent, as the engine answers a zone of the twentieth
+    /// level; and a zone of level 0 has no parent and is no centroid child.
+    #[test]
+    fn the_hierarchy_is_total_on_a_direct_call() {
+        for a in [
+            Address::new(3, &[1; 20]),
+            Address::new(12, &[]),
+            Address::new(15, &[1, 2, 3]),
+            Address::new(4, &[1, 9, 2]),
+        ] {
+            let got = std::panic::catch_unwind(|| {
+                (
+                    HexA7::parents(&a),
+                    HexA7::children(&a),
+                    HexA7::centroid_parent(&a),
+                    HexA7::is_centroid_child(&a),
+                )
+            });
+            assert!(
+                matches!(
+                    &got,
+                    Ok((Some(ps), Some(cs), Some(None), Some(_))) if ps.is_empty() && cs.is_empty()
+                ),
+                "{a:?}: {:?}",
+                got.map_err(|_| "a panic")
+            );
+        }
+        for a in [Address::new(12, &[0]), Address::new(4, &[1, 9, 0])] {
+            assert_eq!(HexA7::is_centroid_child(&a), Some(false), "{a:?}");
+        }
+        let base = Address::new(0, &[]);
+        assert_eq!(HexA7::parents(&base), Some(Vec::new()));
+        assert_eq!(HexA7::centroid_parent(&base), Some(None));
+        assert_eq!(HexA7::is_centroid_child(&base), Some(false));
+        assert_eq!(HexA7::children(&base).map(|cs| cs.len()), Some(11));
+    }
+
+    /// The compaction of sets of several levels, which `Grid` refuses and the engine answers,
+    /// each read from the engine's `compactZones` on ISEA7H_Z7. A zone of level 0 has no
+    /// parent, and leaves the set as soon as a pass meets it, which the first three sets show.
+    ///
+    /// The fourth reaches the short cut that follows the loop: of the seventy-two zones of
+    /// level 1, those whose digit is 1, 3 or 4 as they are, and the children of the others.
+    /// No zone of level 0 has all its children in either part, so the seventy-two all stay,
+    /// with zones of level 2 beside them; and the short cut then puts in their place not the
+    /// twelve zones of level 0 but the zone at the origin of the first rhombus at twelve even
+    /// levels, ten of which the grid has. The engine's answer for that set is those ten
+    /// identifiers and its null zone twice.
+    ///
+    /// The fifth shows that the loop goes on after a pass that takes nothing: the children of
+    /// `0064` but the one at its centre, `00640`, with the thirteen children of that one. The
+    /// first pass takes `00640`, the second takes nothing and ends the ascent, and the third,
+    /// which then finds every child of `0064` among the zones kept, takes `0064`. Were the
+    /// loop left at the second pass, the answer would lack `0064`.
+    #[test]
+    fn the_compaction_of_several_levels_is_the_engines() {
+        use crate::Indexing;
+        use crate::indexings::Z7;
+
+        fn address(text: &str) -> Address {
+            let digits: Vec<u8> = text.bytes().skip(2).map(|b| b - b'0').collect();
+            Address::new(text[..2].parse().unwrap(), &digits)
+        }
+        fn compacted(set: &[Address]) -> String {
+            let answer = HexA7::compact(set).unwrap();
+            let texts: Vec<String> = answer.iter().map(|a| Z7::to_text(Z7::encode(a))).collect();
+            texts.join(" ")
+        }
+        let of = |texts: &str| -> Vec<Address> { texts.split(' ').map(address).collect() };
+
+        for (set, answer) in [
+            ("00 0064", "0064"),
+            ("05 011", "011"),
+            ("0064 00641 00", "0064 00641"),
+            (
+                "00641 00645 00644 00646 00642 00643 00665 00604 00656 00422 03332 03323 \
+                 006400 006401 006405 006404 006406 006402 006403 006461 006425 006434 006416 \
+                 006452 006443",
+                "00422 03332 03323 0064 00640 00641 00645 00644 00646 00642 00643 00656 00665 \
+                 00604 006416 006452 006405 006404 006443 006406 006401 006461 006402 006403 \
+                 006434 006425",
+            ),
+        ] {
+            assert_eq!(compacted(&of(set)), answer, "{set}");
+        }
+
+        let mut set: Vec<Z> = Vec::new();
+        for base in 0..12u64 {
+            for digit in 0..7u8 {
+                let level_1 = Address::new(base, &[digit]);
+                if names_deleted_child(&level_1) {
+                    continue;
+                }
+                let zone = zone_from_steps(base, &[digit]);
+                if matches!(digit, 1 | 3 | 4) {
+                    set.push(zone);
+                } else {
+                    set.extend(get_children(&zone).into_iter().flatten());
+                }
+            }
+        }
+        let level_1 = set.iter().filter(|z| zone_level(z) == 1).count();
+        assert_eq!((level_1, set.len()), (36, 36 + 36 * 13 - 2 * 12));
+        let answer = compact(&set);
+        let built: Vec<Z> = (0..12).map(|r| Z::new(r, 0, 0, 0, 0)).collect();
+        assert_eq!(answer, built);
+        let set: Vec<Address> = set
+            .iter()
+            .map(|z| z7_address(from_7h(z).unwrap(), zone_level(z)))
+            .collect();
+        assert_eq!(
+            compacted(&set),
+            "01 0100 010000 01000000 0100000000 010000000000 01000000000000 0100000000000000 \
+             010000000000000000 01000000000000000000"
+        );
+
+        // A zone for which the engine finds no parent leaves the set, with nothing in its
+        // place. This one, of level 18 in the broken seam over the pole of base cell 0, is
+        // asked of the compaction itself: its identifier is one the engine cannot read back,
+        // so that the conversion of the answer would leave it out whatever the compaction did.
+        let orphan = zone_from_steps(0, address("00000000000000001311").digits());
+        assert_eq!(zone_level(&orphan), 18);
+        assert!(get_parents(&orphan).is_empty());
+        assert!(from_7h(&orphan).is_none());
+        assert_eq!(compact(&[orphan]), []);
+
+        // No zone gives no zone; a zone given twice counts once; an address of twenty digits,
+        // which the engine reads as its null zone, is left out of the set.
+        assert_eq!(HexA7::compact(&[]), Some(Vec::new()));
+        assert_eq!(compacted(&of("0064 0064 00")), "0064");
+        assert_eq!(
+            compacted(&[address("0064"), Address::new(0, &[0; 20])]),
+            "0064"
+        );
+        assert_eq!(compacted(&[Address::new(3, &[1; 20])]), "");
     }
 }

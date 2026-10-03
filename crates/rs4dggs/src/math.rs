@@ -52,6 +52,12 @@ pub fn atan2(y: f64, x: f64) -> f64 {
 pub fn sqrt(x: f64) -> f64 {
     x.sqrt()
 }
+/// No eC counterpart: a wrapper over `f64::ln`, kept here so that every such call can
+/// move to `libm` in one place.
+#[inline]
+pub fn ln(x: f64) -> f64 {
+    x.ln()
+}
 /// `x` raised to an integer power, as Python's `7 ** n` in the out-of-table
 /// fallback of `hex_a7.pow7`. It lives here rather than at the call site
 /// because `f64::powi` is a libm-backed operation like the trigonometry above,

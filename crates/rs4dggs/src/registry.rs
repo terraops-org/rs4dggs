@@ -13,7 +13,7 @@ use crate::grid::Grid;
 use crate::indexings::{I3h, Z7};
 use crate::projections::{Isea, Ivea, Rtea};
 use crate::topologies::{HexA3, HexA7};
-use crate::{Error, GeoPoint, GridConfig, Result, ZoneId};
+use crate::{Error, Extent, GeoPoint, GridConfig, Result, ZoneId};
 
 /// A registry grid on the canonical orientation.
 ///
@@ -232,18 +232,51 @@ impl AnyGrid {
         dispatch!(self, g => g.vertices(id))
     }
 
+    /// The zone's area in square metres, or `None` for a zone without geometry; see
+    /// [`Grid::area`].
+    pub fn area(&self, id: ZoneId) -> Option<f64> {
+        dispatch!(self, g => g.area(id))
+    }
+
+    /// The zone's boundary in WGS84 degrees with every edge divided into `edge_refinement`
+    /// parts, 0 for the engine's own choice, or the empty ring for a zone without geometry;
+    /// see [`Grid::refined_vertices`] for the sequence, the longitudes, which are continuous
+    /// beyond 180 degrees, and the refinement that is refused: one above
+    /// [`crate::grid::max_edge_refinement`], which `RS4DGGS_MAX_EDGE_REFINEMENT` may lower from
+    /// 100,000 and which never refuses 0.
+    pub fn refined_vertices(&self, id: ZoneId, edge_refinement: u32) -> Result<Vec<GeoPoint>> {
+        dispatch!(self, g => g.refined_vertices(id, edge_refinement))
+    }
+
+    /// For the tests of the ring itself, which hold whatever the edge-refinement limit is.
+    #[cfg(test)]
+    pub(crate) fn refined_vertices_within_limit(
+        &self,
+        id: ZoneId,
+        edge_refinement: u32,
+    ) -> Vec<GeoPoint> {
+        dispatch!(self, g => g.refined_vertices_within_limit(id, edge_refinement))
+    }
+
+    /// The zone's geographic extent in WGS84 degrees, or `None` for a zone without geometry;
+    /// see [`Grid::extent`], and [`Extent`] for an extent over the antimeridian.
+    pub fn extent(&self, id: ZoneId) -> Option<Extent> {
+        dispatch!(self, g => g.extent(id))
+    }
+
     /// The zone's edge neighbours; see [`Grid::neighbors`], which also says where the
     /// relation is not symmetric.
     pub fn neighbors(&self, id: ZoneId) -> Vec<ZoneId> {
         dispatch!(self, g => g.neighbors(id))
     }
 
-    /// The zone's parents.
+    /// The zone's parents as DGGAL lists them, the primary parent first; see
+    /// [`Grid::parents`].
     pub fn parents(&self, id: ZoneId) -> Vec<ZoneId> {
         dispatch!(self, g => g.parents(id))
     }
 
-    /// The zone's children.
+    /// The zone's children as DGGAL lists them, in its order; see [`Grid::children`].
     pub fn children(&self, id: ZoneId) -> Vec<ZoneId> {
         dispatch!(self, g => g.children(id))
     }
@@ -254,7 +287,7 @@ impl AnyGrid {
         dispatch!(self, g => g.centroid_parent(id))
     }
 
-    /// Whether the zone is its parent's centroid child.
+    /// Whether the zone is a centroid child; see [`Grid::is_centroid_child`].
     pub fn is_centroid_child(&self, id: ZoneId) -> bool {
         dispatch!(self, g => g.is_centroid_child(id))
     }
@@ -270,20 +303,23 @@ impl AnyGrid {
         dispatch!(self, g => g.first_sub_zone(id, depth))
     }
 
-    /// Every sub-zone `depth` levels below the zone, in the grid's own order.
+    /// Every sub-zone `depth` levels below the zone, in the grid's own order, which on
+    /// every grid is the engine's, in scanlines across the zone; see [`Grid::sub_zones`],
+    /// which also says where an entry on an aperture-7 grid is [`ZoneId::NULL`].
     pub fn sub_zones(&self, id: ZoneId, depth: u8) -> Result<Vec<ZoneId>> {
         dispatch!(self, g => g.sub_zones(id, depth))
     }
 
     /// Where `sub` sits in the zone's sub-zone order, or `None` if it is no
-    /// sub-zone of it. Both identifiers are read on this one grid, and each is
+    /// sub-zone of it, or one that has no index. Both identifiers are read on this one grid, and each is
     /// validated first; see [`Grid::sub_zone_index`], which also gives the ways
     /// in which the answer departs from the engine's.
     pub fn sub_zone_index(&self, id: ZoneId, sub: ZoneId) -> Result<Option<u64>> {
         dispatch!(self, g => g.sub_zone_index(id, sub))
     }
 
-    /// The sub-zone at `index`, `depth` levels below the zone.
+    /// The sub-zone at `index`, `depth` levels below the zone, found without building
+    /// the order; see [`Grid::sub_zone_at_index`].
     pub fn sub_zone_at_index(&self, id: ZoneId, depth: u8, index: u64) -> Result<ZoneId> {
         dispatch!(self, g => g.sub_zone_at_index(id, depth, index))
     }
@@ -309,6 +345,67 @@ impl AnyGrid {
         dispatch!(self, g => g.zone(child).is_immediate_child_of(&g.zone(parent)))
     }
 
+    /// The factor by which a level has more zones than the one above it; see
+    /// [`Grid::refinement_ratio`].
+    pub fn refinement_ratio(&self) -> u8 {
+        dispatch!(self, g => g.refinement_ratio())
+    }
+
+    /// The most parents a zone has; see [`Grid::max_parents`].
+    pub fn max_parents(&self) -> u8 {
+        dispatch!(self, g => g.max_parents())
+    }
+
+    /// The most children a zone has; see [`Grid::max_children`].
+    pub fn max_children(&self) -> u8 {
+        dispatch!(self, g => g.max_children())
+    }
+
+    /// The most edge neighbours a zone has; see [`Grid::max_neighbors`].
+    pub fn max_neighbors(&self) -> u8 {
+        dispatch!(self, g => g.max_neighbors())
+    }
+
+    /// The depth at which a zone has about 65,536 sub-zones; see [`Grid::depth_64k`].
+    pub fn depth_64k(&self) -> u8 {
+        dispatch!(self, g => g.depth_64k())
+    }
+
+    /// The deepest relative depth at which DGGAL lists a zone's sub-zones; see
+    /// [`Grid::max_depth`].
+    pub fn max_depth(&self) -> u8 {
+        dispatch!(self, g => g.max_depth())
+    }
+
+    /// The number of zones at `level`; see [`Grid::count_zones`], which also says why a level
+    /// beyond the finest resolution is refused.
+    pub fn count_zones(&self, level: u8) -> Result<u64> {
+        dispatch!(self, g => g.count_zones(level))
+    }
+
+    /// The reference area of a zone at `level` in square metres; see [`Grid::ref_zone_area`].
+    pub fn ref_zone_area(&self, level: u8) -> Result<f64> {
+        dispatch!(self, g => g.ref_zone_area(level))
+    }
+
+    /// The size in metres of the sub-zones `depth` levels below a zone of `level`; see
+    /// [`Grid::meters_per_sub_zone`].
+    pub fn meters_per_sub_zone(&self, level: u8, depth: u8) -> Result<f64> {
+        dispatch!(self, g => g.meters_per_sub_zone(level, depth))
+    }
+
+    /// The level whose reference area an area of `square_metres` reaches; see
+    /// [`Grid::level_from_ref_zone_area`], which also says how far the answer reaches.
+    pub fn level_from_ref_zone_area(&self, square_metres: f64) -> u8 {
+        dispatch!(self, g => g.level_from_ref_zone_area(square_metres))
+    }
+
+    /// The level whose sub-zones `depth` levels below it measure `metres`; see
+    /// [`Grid::level_from_meters_per_sub_zone`].
+    pub fn level_from_meters_per_sub_zone(&self, metres: f64, depth: u8) -> u8 {
+        dispatch!(self, g => g.level_from_meters_per_sub_zone(metres, depth))
+    }
+
     /// Every zone within `k` neighbour steps of the zone, the zone included, as a
     /// lazy iterator of identifiers in the order [`Disk`] defines, the same walk as
     /// [`Grid::disk`] on the grid this handle names. Nothing is computed until the
@@ -322,12 +419,87 @@ impl AnyGrid {
     pub fn disk(&self, id: ZoneId, k: u32) -> Disk<AnyGrid> {
         Disk::new(*self, id, k)
     }
+
+    /// The finest level at which this crate enumerates zones, 33 on the aperture-3 grids and
+    /// 14 on the aperture-7 grids; see [`Grid::max_box_level`], which says why.
+    pub fn max_box_level(&self) -> u8 {
+        dispatch!(self, g => g.max_box_level())
+    }
+
+    /// The zones that one cell of the lattice of `level` hosts; see `Grid::lattice_cell`.
+    pub(crate) fn lattice_cell(
+        &self,
+        level: u8,
+        root: u8,
+        row: u64,
+        col: u64,
+    ) -> Vec<(ZoneId, u64)> {
+        dispatch!(self, g => g.lattice_cell(level, root, row, col))
+    }
+
+    /// Where the lattice of `level` holds `zone`; see `Grid::lattice_place`.
+    pub(crate) fn lattice_place(&self, level: u8, zone: ZoneId) -> Result<(u8, u64, u64, u64)> {
+        dispatch!(self, g => g.lattice_place(level, zone))
+    }
+
+    /// Every zone of `level`, as a lazy iterator of identifiers in the order of DGGAL's
+    /// `listZones` for the whole world, the same sequence as [`Grid::zones`] on the grid this
+    /// handle names; see [`crate::Zones`] for the order and the cost, and
+    /// [`crate::Zones::after`] to enter the sequence after one of its zones. It is
+    /// [`Error::ResolutionOutOfRange`] beyond [`AnyGrid::max_box_level`].
+    ///
+    /// As with [`AnyGrid::disk`], the iterator is a concrete type that holds this handle, and
+    /// keeps its type as further grids join the enum.
+    pub fn zones(&self, level: u8) -> Result<crate::Zones<AnyGrid>> {
+        let walk = dispatch!(self, g => g.lattice_walk(level))?;
+        Ok(crate::Zones::new(*self, walk))
+    }
+
+    /// The point of the sphere at a point of the plane of the rhombi; see
+    /// `Grid::lattice_point`.
+    pub(crate) fn lattice_point(&self, x: f64, y: f64) -> Option<(f64, f64)> {
+        dispatch!(self, g => g.lattice_point(x, y))
+    }
+
+    /// Whether the extent of `zone` meets the box; see `Grid::zone_meets_box`.
+    pub(crate) fn zone_meets_box(&self, zone: ZoneId, bbox: &[f64; 4], reach: f64) -> bool {
+        dispatch!(self, g => g.zone_meets_box(zone, bbox, reach))
+    }
+
+    /// The zones of `level` whose extent meets the bounding box `bbox`, as a lazy iterator of
+    /// identifiers in the order of DGGAL's `listZones`, the same sequence as
+    /// [`Grid::zones_in_box`] on the grid this handle names, with the same refusals; see that
+    /// method for what a box may be and what a caller must know, [`crate::ZonesInBox`] for the
+    /// rule, the order and the cost, and [`crate::ZonesInBox::after`] to enter the answer
+    /// after a zone of the level.
+    ///
+    /// As with [`AnyGrid::disk`], the iterator is a concrete type that holds this handle, and
+    /// keeps its type as further grids join the enum.
+    pub fn zones_in_box(&self, level: u8, bbox: &Extent) -> Result<crate::ZonesInBox<AnyGrid>> {
+        let (walk, search) = dispatch!(self, g => g.box_search(level, bbox))?;
+        Ok(crate::ZonesInBox::new(*self, walk, search))
+    }
+
+    /// An upper bound, by arithmetic alone, on how many zones [`AnyGrid::zones_in_box`] yields
+    /// for `level` and `bbox`, with the same refusals; see [`Grid::estimate_zones_in_box`] for
+    /// what it is, what it rests on and how far above the count it lies.
+    pub fn estimate_zones_in_box(&self, level: u8, bbox: &Extent) -> Result<u64> {
+        dispatch!(self, g => g.estimate_zones_in_box(level, bbox))
+    }
+
+    /// DGGAL's `compactZones` of the zones of one level, on the grid this handle names: a
+    /// shorter list that stands for the same set, in the engine's order; see
+    /// [`Grid::compact_zones`] for what the answer is, that its zones overlap, and the
+    /// refusals.
+    pub fn compact_zones(&self, zones: &[ZoneId]) -> Result<Vec<ZoneId>> {
+        dispatch!(self, g => g.compact_zones(zones))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{GRID_NAMES, get_grid, igeo7, isea3h, ivea3h, ivea7h, rtea3h, rtea7h};
-    use crate::{Error, GridConfig, ZoneId};
+    use crate::{GridConfig, ZoneId};
 
     #[test]
     fn the_singleton_is_built_once() {
@@ -395,17 +567,37 @@ mod tests {
         assert_eq!(g.resolution(id), 5);
         assert!(!g.is_pentagon(id));
         assert!(g.is_pentagon(pentagon));
-        assert_eq!(g.centroid_parent(id), Some(parent));
-        assert!(g.is_centroid_child(id));
-        assert_eq!(g.count_sub_zones(id, 1), Err(Error::NoSubZoneOrder));
-        assert_eq!(g.first_sub_zone(id, 1), Err(Error::NoSubZoneOrder));
-        assert_eq!(g.sub_zones(id, 1), Err(Error::NoSubZoneOrder));
-        assert_eq!(g.sub_zone_at_index(id, 1, 0), Err(Error::NoSubZoneOrder));
-        assert_eq!(g.sub_zone_index(id, id), Ok(Some(0)));
+        // `0064156` is no centroid child, and neither of its parents, `006415` and `006414`,
+        // is one, so that it has no centroid parent; its first child, `00641560`, is one, and
+        // is therefore the centroid parent of its own child `006415601`.
+        assert_eq!(g.centroid_parent(id), None);
+        assert!(!g.is_centroid_child(id));
+        let first_child = g.children(id)[0];
+        assert_eq!(g.text_id(first_child), "00641560");
+        assert!(g.is_centroid_child(first_child));
         assert_eq!(
-            g.sub_zone_index(id, g.children(id)[0]),
-            Err(Error::NoSubZoneOrder)
+            g.centroid_parent(g.zone_from_text("006415601").unwrap()),
+            Some(first_child)
         );
+        // The sub-zones of `0064156` at depth 1, in the engine's order, which is the typed
+        // grid's.
+        assert_eq!(g.count_sub_zones(id, 1), Ok(13));
+        let order = g.sub_zones(id, 1).unwrap();
+        assert_eq!(Ok(&order), typed.sub_zones(id, 1).as_ref());
+        let texts: Vec<String> = order.iter().map(|&s| g.text_id(s)).collect();
+        assert_eq!(
+            texts,
+            [
+                "00641524", "00641506", "00641561", "00641563", "00641055", "00641565", "00641560",
+                "00641562", "00641542", "00641564", "00641566", "00641431", "00641413",
+            ]
+        );
+        assert_eq!(g.first_sub_zone(id, 1), Ok(order[0]));
+        assert_eq!(g.sub_zone_at_index(id, 1, 0), Ok(order[0]));
+        assert_eq!(g.sub_zone_at_index(id, 1, 12), Ok(order[12]));
+        assert_eq!(g.sub_zone_index(id, id), Ok(Some(0)));
+        // The first child is the centroid child, in the middle of the order.
+        assert_eq!(g.sub_zone_index(id, g.children(id)[0]), Ok(Some(6)));
         assert_eq!(g.parent(id), Some(parent));
         assert_eq!(g.parent(id), typed.zone(id).parent().map(|z| z.id()));
         assert_eq!(g.parent(root), None);
@@ -480,15 +672,21 @@ mod tests {
         assert_eq!(g.text_id(id), "0064156");
         assert_eq!(g.zone_from_text("0064156").unwrap(), id);
         assert_eq!(g.neighbors(id).len(), 6);
-        assert_eq!(g.children(id).len(), 7);
-        assert_eq!(g.parents(id).len(), 1);
+        assert_eq!(g.children(id).len(), 13);
+        assert_eq!(
+            g.parents(id),
+            [
+                g.zone_from_text("006415").unwrap(),
+                g.zone_from_text("006414").unwrap()
+            ]
+        );
         assert_eq!(g.vertices(id).len(), 6);
         // DGGAL v0.0.6's own centroid latitude, as in `ivea7h_and_rtea7h_anchors`.
         assert_eq!(g.centroid(id).lat, 38.61687542349096);
 
-        // Every aperture-7 grid, through the same handle, once: the shared Z7 indexing
-        // makes the relational operations agree on the same texts across all three, since
-        // only the projection, not the hierarchy, differs between them.
+        // Every aperture-7 grid, through the same handle, once: the relational operations
+        // agree on the same texts across all three, since the hierarchy is found in the
+        // plane the three share, and only the projection differs between them.
         for (name, centroid_lat) in [
             ("IGEO7", 38.61687542349096),
             ("IVEA7H", 38.559613393079225),

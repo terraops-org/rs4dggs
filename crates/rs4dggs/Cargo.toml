@@ -29,6 +29,11 @@ dggal-oracle = { path = "../dggal-oracle" }
 oracle = []
 
 [[test]]
+name = "oracle_boxes"
+path = "tests/oracle_boxes.rs"
+required-features = ["oracle"]
+
+[[test]]
 name = "oracle_igeo7"
 path = "tests/oracle_igeo7.rs"
 required-features = ["oracle"]

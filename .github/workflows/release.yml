@@ -3,7 +3,7 @@ name: Release
 # Every commit is checked by the pre-commit hook (.githooks/pre-commit) and by ci.yml on push;
 # this workflow makes a release. Pushing a version tag (v0.1.0, matching the workspace version in
 # Cargo.toml) runs the gate on the tagged commit (save the oracle suites, which run locally),
-# packages both crates, builds the command-line tool for Linux, macOS and Windows, and publishes a
+# packages the three crates, builds the command-line tool for Linux, macOS and Windows, and publishes a
 # GitHub Release with every file and its SHA-256 checksum. A manual run does the same without
 # creating a release, and leaves the files as workflow artifacts.
 on:
@@ -16,7 +16,7 @@ permissions:
 
 # The Rust version is pinned, so that a new stable release, whose Clippy may add a lint, cannot turn
 # the workflows red on its own; raise it deliberately, after running the gate locally on the new
-# version. Cargo 1.90 or later is needed to package both crates together (release.yml).
+# version. Cargo 1.90 or later is needed to package the three crates together (release.yml).
 
 jobs:
   gate:
@@ -44,10 +44,10 @@ jobs:
         # PyPI's DGGAL wheel is another build than the one the compiled operation orders were read
         # from, so the oracle suites run locally, in the pre-commit hook, and not here.
         run: ./scripts/check.sh --without-dggal
-      - name: Both crates packaged
-        # Packaged together, so that the tool is verified against the library packaged beside it
-        # before the library is on crates.io.
-        run: cargo package -p rs4dggs -p rs4dggs-cli --locked
+      - name: The three crates packaged
+        # Packaged together, so that the encodings and the tool are verified against the library,
+        # and the tool against the encodings, packaged beside them before any is on crates.io.
+        run: cargo package -p rs4dggs -p rs4dggs-ogc -p rs4dggs-cli --locked
       - uses: actions/upload-artifact@v4
         with:
           name: crates
@@ -73,7 +73,7 @@ jobs:
           toolchain: "1.98.1"
           targets: ${{ matrix.target }}
       - name: Build
-        # The tool depends on the library alone, so DGGAL is not needed here.
+        # The tool depends on the library and the encodings alone, so DGGAL is not needed here.
         run: cargo build --release --locked -p rs4dggs-cli --target ${{ matrix.target }}
       - name: Archive
         shell: bash

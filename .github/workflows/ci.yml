@@ -18,7 +18,7 @@ concurrency:
 
 # The Rust version is pinned, so that a new stable release, whose Clippy may add a lint, cannot turn
 # the workflows red on its own; raise it deliberately, after running the gate locally on the new
-# version. Cargo 1.90 or later is needed to package both crates together (release.yml).
+# version. Cargo 1.90 or later is needed to package the three crates together (release.yml).
 
 jobs:
   gate:

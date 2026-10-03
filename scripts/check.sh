@@ -4,6 +4,21 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# The crate reads two environment variables, each of which lowers one of its limits for the whole
+# process, and the tests take both limits at their ceilings: the oracle suites assert it, and
+# under a lowered limit on a list of sub-zones the unit tests that build lists fail with the
+# crate's own refusal, which does not name the variable. The gate therefore refuses to run while
+# either is set, whatever its value, rather than fail for a reason it would not state.
+for var in RS4DGGS_MAX_MATERIALISED_SUB_ZONES RS4DGGS_MAX_EDGE_REFINEMENT; do
+  [[ -z "${!var+set}" ]] || {
+    echo "$var is set in the environment (to \"${!var}\")." >&2
+    echo "It lowers a limit of the crate, and the tests assume that limit at its ceiling, so that" >&2
+    echo "under it they may fail without naming the cause. Unset it and run the gate again:" >&2
+    echo "  unset $var" >&2
+    exit 1
+  }
+done
+
 # `--without-dggal` checks everything save what needs DGGAL's own libraries: the build identity and
 # the oracle suites. GitHub's workflows run this form, since the runners cannot install the DGGAL
 # build the compiled operation orders were read from; every commit runs the full gate locally, in
@@ -77,9 +92,9 @@ fi
 # workspace member regardless of -p, so without --no-deps the vendored path dependencies
 # would be linted (and fail) too; --no-deps keeps clippy's lint pass on the selected
 # packages only, while the vendored crates still build normally for linking.
-CRATES=(-p rs4dggs -p rs4dggs-cli -p dggal-oracle)
-FEATURES=(--features rs4dggs/oracle,rs4dggs-cli/oracle)
-if (( ! WITH_DGGAL )); then CRATES=(-p rs4dggs -p rs4dggs-cli); FEATURES=(); fi
+CRATES=(-p rs4dggs -p rs4dggs-cli -p rs4dggs-ogc -p dggal-oracle)
+FEATURES=(--features rs4dggs/oracle,rs4dggs-cli/oracle,rs4dggs-ogc/oracle)
+if (( ! WITH_DGGAL )); then CRATES=(-p rs4dggs -p rs4dggs-cli -p rs4dggs-ogc); FEATURES=(); fi
 # `cargo fmt` is scoped to the owned crates deliberately. The four crates under
 # crates/dggal-oracle/vendor are verbatim upstream DGGAL and eCere binding sources, kept
 # byte-identical so that they can be diffed against a new release; reformatting them would
@@ -87,14 +102,122 @@ if (( ! WITH_DGGAL )); then CRATES=(-p rs4dggs -p rs4dggs-cli); FEATURES=(); fi
 echo "== fmt";     cargo fmt "${CRATES[@]}" --check
 # --features rs4dggs/oracle, not a bare --features oracle: with several packages selected by
 # -p, an unqualified feature name is only accepted when every selected package declares
-# it, and the others do not. The oracle feature is rs4dggs's own; the qualified form
-# says so and reaches the two inline oracle-dependent tests, in topologies/hex_a7.rs and
-# topologies/hex_a3_subzones.rs, and the six integration suites under tests/, one per grid,
+# it, and the others do not. Each crate's oracle feature is its own; the qualified form
+# says so. In rs4dggs it reaches the inline oracle-dependent tests, in grid.rs,
+# topologies/hex_a7.rs, topologies/hex_a3.rs and topologies/hex_a3_subzones.rs, and the six
+# integration suites under tests/, one per grid; in rs4dggs-cli and rs4dggs-ogc, the suite that
+# compares each with DGGAL's own `dgg`,
 # so that clippy and test cover them here, in the one place the feature is meaningful,
 # exactly as they did before it existed.
 echo "== clippy";  cargo clippy "${CRATES[@]}" --all-targets --no-deps "${FEATURES[@]}" -- -D warnings
 echo "== test";    cargo test "${CRATES[@]}" "${FEATURES[@]}"
+echo "== rs4dggs-ogc: definitions and goldens"
+# Every JSON and GeoJSON file the encodings keep, the definitions of the grids and the documents
+# the tests compare with, must be JSON as RFC 8259 has it, in UTF-8: Python's own reader accepts
+# `NaN` and `Infinity`, which are not JSON, and keeps the last of two members of one name in
+# silence, so that both are refused here. A directory not yet present holds no file.
+python3 - crates/rs4dggs-ogc/definitions crates/rs4dggs-ogc/tests/goldens <<'EOF'
+import json, pathlib, sys
+
+def no_constant(token):
+    raise ValueError(f"{token} is not JSON")
+
+def no_repeated_member(pairs):
+    names = [k for k, _ in pairs]
+    if len(set(names)) != len(names):
+        raise ValueError(f"a member is repeated among {names}")
+    return dict(pairs)
+
+for d in map(pathlib.Path, sys.argv[1:]):
+    files = sorted(p for p in d.rglob("*") if p.suffix in (".json", ".geojson")) if d.is_dir() else []
+    for p in files:
+        try:
+            json.loads(p.read_bytes().decode("utf-8"), parse_constant=no_constant,
+                       object_pairs_hook=no_repeated_member)
+        except ValueError as e:
+            sys.exit(f"{p}: {e}")
+    print(f"{d}: {len(files)} files parsed")
+EOF
+# The goldens of the zone lists, at least: a directory emptied by mistake would pass the step above.
+goldens=$(find crates/rs4dggs-ogc/tests/goldens -type f -name '*.json' | wc -l)
+if (( goldens < 2 )); then
+  echo "crates/rs4dggs-ogc/tests/goldens: $goldens JSON goldens, fewer than the 2 of the zone lists" >&2; exit 1
+fi
+# The six definitions of the grids, and the two that are the OGC register's files, held to the
+# register's bytes, so that a verbatim copy cannot be edited unawares.
+definitions=$(find crates/rs4dggs-ogc/definitions -type f -name '*.json' | wc -l)
+if (( definitions < 6 )); then
+  echo "crates/rs4dggs-ogc/definitions: $definitions definitions, fewer than the six grids" >&2; exit 1
+fi
+sha256sum --check --quiet <<'EOF'
+bfc76a11c3a8b8f7c642f8efd997b664f4c03588ef91afbca8728bb5e9ec4bb2  crates/rs4dggs-ogc/definitions/ISEA3H.json
+bba46a41a7fa19786ddd80081bbaea5b6da180d1e3b7de51686a4534eddfbc65  crates/rs4dggs-ogc/definitions/IVEA3H.json
+ef345a7920dd0ac58a342ee8867e455c2930c8d0baa6fc64b924be2929538a42  crates/rs4dggs-ogc/tests/fixtures/ogc/dggs-json.json
+d41a00f8fa473e231eaa93bd43dd72ecdf8bbfa69c66a9e77f2e974bca2a61af  crates/rs4dggs-ogc/tests/fixtures/ogc/1-temperature.json
+EOF
+echo "crates/rs4dggs-ogc/definitions: the two registered definitions are the register's bytes"
+# The goldens of zone data, at least the eight of DGGS-JSON.
+data_goldens=$(find crates/rs4dggs-ogc/tests/goldens -type f -name 'data-*.json' | wc -l)
+if (( data_goldens < 8 )); then
+  echo "crates/rs4dggs-ogc/tests/goldens: $data_goldens goldens of zone data, fewer than 8" >&2; exit 1
+fi
+# And the two of DGGS-UBJSON, which no step above reads.
+ubjson_goldens=$(find crates/rs4dggs-ogc/tests/goldens -type f -name 'data-*.ubj' | wc -l)
+if (( ubjson_goldens < 2 )); then
+  echo "crates/rs4dggs-ogc/tests/goldens: $ubjson_goldens goldens of DGGS-UBJSON, fewer than 2" >&2; exit 1
+fi
+if (( WITH_DGGAL )); then
+echo "== rs4dggs-ogc: the DGGS-JSON schema"
+# Every golden of zone data, and the standard's own example, against the standard's schema of
+# DGGS-JSON. Run with DGGAL alone, as the oracle suites are: it needs Python's `jsonschema`, which
+# GitHub's runners do not have, and an absent module fails the gate rather than skip the step.
+python3 - crates/rs4dggs-ogc/tests/fixtures/ogc crates/rs4dggs-ogc/tests/goldens <<'EOF'
+import json, pathlib, sys
+
+try:
+    from jsonschema import Draft202012Validator
+except ImportError:
+    sys.exit("the DGGS-JSON schema step needs the Python module jsonschema: pip install jsonschema")
+
+fixtures, goldens = map(pathlib.Path, sys.argv[1:])
+def read(p):
+    return json.loads(p.read_text(encoding="utf-8"))
+
+published = Draft202012Validator(read(fixtures / "dggs-json.json"))
+schema = read(fixtures / "dggs-json.json")
+# The published schema marks the values `nullable`, a word of OpenAPI 3.0 that a validator of
+# JSON Schema Draft 2020-12 ignores, so that it refuses the `null` the standard requires for a
+# missing value. Patched here, in memory, in that one place; the file stays as published.
+schema["properties"]["values"]["additionalProperties"]["items"]["properties"]["data"]["items"] = {
+    "type": ["number", "null"]}
+patched = Draft202012Validator(schema)
+
+documents = sorted(goldens.glob("data-*.json"))
+if not documents:
+    sys.exit(f"{goldens}: no golden of zone data to validate")
+for p in [fixtures / "1-temperature.json", *documents]:
+    errors = [e.message for e in patched.iter_errors(read(p))]
+    if errors:
+        sys.exit(f"{p}: {errors}")
+
+# The step can fail: a document without its zone is refused, and so is a `null` by the schema as
+# published.
+first = read(documents[0])
+del first["zoneId"]
+if patched.is_valid(first):
+    sys.exit("the schema accepts a document without zoneId")
+if published.is_valid(read(goldens / "data-ISEA3H-C2-23-C-depth1.null-at-2.json")):
+    sys.exit("the published schema accepts a null value: the patch may no longer be needed")
+print(f"{goldens}: the example and {len(documents)} goldens of zone data are valid DGGS-JSON")
+EOF
+fi
+# The GeoJSON goldens of a zone, of its feature, of the zone lists and of zone data, at least.
+geo_goldens=$(find crates/rs4dggs-ogc/tests/goldens -type f -name '*.geojson' | wc -l)
+if (( geo_goldens < 7 )); then
+  echo "crates/rs4dggs-ogc/tests/goldens: $geo_goldens GeoJSON goldens, fewer than the 7 of a zone, its lists and zone data" >&2; exit 1
+fi
 echo "== doc";      RUSTDOCFLAGS="-D warnings" cargo doc -p rs4dggs --no-deps
+RUSTDOCFLAGS="-D warnings" cargo doc -p rs4dggs-ogc --no-deps
 echo "== trig only in math.rs"
 # Both call forms are caught: the method form `x.sin()` and the path form `f64::sin(x)`.
 if grep -rnE '(\.|f64::)(sin|cos|tan|asin|acos|atan|atan2|sqrt|hypot|cbrt|exp|ln|powf|powi|sinh|cosh|tanh|to_radians|to_degrees)\(' \
@@ -117,6 +240,9 @@ echo "== package"; cargo package -p rs4dggs --allow-dirty --quiet
 # and the full check waits for publication.
 cargo package -p rs4dggs-cli --allow-dirty --list >/dev/null
 echo "rs4dggs-cli: file set checked; its full package check waits for rs4dggs on crates.io"
+# The same holds for the encodings: the rs4dggs on crates.io lacks functions they call.
+cargo package -p rs4dggs-ogc --allow-dirty --list >/dev/null
+echo "rs4dggs-ogc: file set checked; its full package check waits for rs4dggs on crates.io"
 echo "== README"
 # The repository's front page and the crate's are one document kept in two places: GitHub
 # renders the root copy, crates.io and docs.rs the crate's. The crate's is the one to edit.
@@ -125,8 +251,8 @@ if ! cmp -s README.md crates/rs4dggs/README.md; then
   exit 1
 fi
 echo "== without DGGAL"
-# A clone without the engine must still build, test, document and run the crate itself:
-# only the test-only oracle needs DGGAL. A target directory of its own, so that the
+# A clone without the engine must still build, test, document and run the library, the tool and
+# the encodings: only the test-only oracle needs DGGAL. A target directory of its own, so that the
 # oracle's build scripts, which read the variable, are not re-run on every gate.
 nodggal() { env -u DGGAL_SITE_PACKAGES -u LD_LIBRARY_PATH CARGO_TARGET_DIR=target/no-dggal "$@"; }
 nodggal cargo test -q >/dev/null
@@ -139,7 +265,7 @@ echo "== examples"
 ex() { cargo run -q -p rs4dggs --example "$@"; }
 out=$(ex quantise -- 5 38.7223 -9.1393); grep -q $'\t0064156\t' <<<"$out"
 ex hierarchy >/dev/null
-out=$(ex hierarchy -- 00); grep -q '6 children' <<<"$out"
+out=$(ex hierarchy -- 00); grep -q '11 children' <<<"$out"
 out=$(ex hierarchy -- 006415600000000000000); grep -q 'no children: resolution 19' <<<"$out"
 # Each polygon's ring must be closed, its last point repeating its first, as GeoJSON requires.
 rings_closed='import json,sys
@@ -169,7 +295,7 @@ for bad in "h3 info" "igeo7 frobnicate"; do
   cargo run -q -p rs4dggs-cli -- $bad >/dev/null 2>&1 || rc=$?
   [[ $rc -eq 2 ]] || { echo "the tool did not refuse cleanly (exit $rc): $bad" >&2; exit 1; }
 done
-echo "== declared minimum (rust-version = 1.85, rs4dggs and rs4dggs-cli; see Cargo.toml)"
+echo "== declared minimum (rust-version = 1.85, rs4dggs, rs4dggs-cli and rs4dggs-ogc; see Cargo.toml)"
 # Not the whole gate above: the test-only oracle (dggal-oracle, its vendored ecrt) needs
 # rust 1.87 for integer_sign_cast, so this checks the published crates on their own, and
 # only when 1.85 is actually installed. Never silent: absent, it says so rather than
@@ -179,7 +305,7 @@ if ! command -v rustup >/dev/null 2>&1; then
 elif ! rustup toolchain list 2>/dev/null | grep -q '^1\.85'; then
   echo "declared minimum not checked: rust 1.85 is not installed (rustup toolchain install 1.85 --profile minimal)"
 else
-  cargo +1.85 check -p rs4dggs -p rs4dggs-cli
+  cargo +1.85 check -p rs4dggs -p rs4dggs-cli -p rs4dggs-ogc
 fi
 # Local additions this checkout keeps outside the published set, run here, where present.
 if [[ -x check.local.sh ]]; then ./check.local.sh; fi

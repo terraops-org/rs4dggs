@@ -30,7 +30,16 @@ fn tool_ok(args: &[&str]) -> String {
     out
 }
 
-/// `dgg` run with the arguments: its exit status and standard output.
+/// The seconds after which a `dgg` still running is stopped, so that no call can hold a test for
+/// ever. No call made here takes a second by itself; the bound is generous on purpose, and is
+/// no measure of anything.
+const DGG_SECONDS: &str = "600";
+
+/// `dgg` run with the arguments, under the `timeout` of the coreutils: whether it answered (exit
+/// code 0) or refused (exit code 1, as for an index at which it finds no zone), and its standard
+/// output. Any other end fails the test, so that it is never taken for an answer: DGGAL ends the
+/// process at some zones, which shows here as a signal, and a `dgg` stopped for running too long
+/// shows as exit code 124.
 fn dgg_raw(args: &[&str]) -> (bool, String) {
     let site = std::env::var("DGGAL_SITE_PACKAGES")
         .expect("DGGAL_SITE_PACKAGES must name a site-packages with dggal installed");
@@ -41,13 +50,22 @@ fn dgg_raw(args: &[&str]) -> (bool, String) {
         Ok(old) if !old.is_empty() => format!("{libs}:{old}"),
         _ => libs,
     };
-    let output = Command::new(&exe)
+    let output = Command::new("timeout")
+        .arg(DGG_SECONDS)
+        .arg(&exe)
         .args(args)
         .env("LD_LIBRARY_PATH", ld)
         .output()
-        .expect("dgg runs");
+        .expect("timeout and dgg run");
+    let code = output.status.code();
+    assert!(
+        matches!(code, Some(0 | 1)),
+        "dgg {args:?} neither answered nor refused: {} (a signal is the engine ending the \
+         process, and 124 the time allowed running out)",
+        output.status
+    );
     (
-        output.status.success(),
+        code == Some(0),
         String::from_utf8(output.stdout).expect("dgg writes UTF-8"),
     )
 }
@@ -318,6 +336,69 @@ fn engine_neighbours_less_four(grid: &AnyGrid, own: &str, list: &[String]) -> Ve
     kept
 }
 
+/// Whether the grid reads `text` as a zone. `dgg` prints the null zone as `(null)`, and along the
+/// two broken seams of the aperture-7 grids some identifiers that the engine itself cannot read.
+fn readable(grid: &AnyGrid, text: &str) -> bool {
+    matches!(grid.zone_from_text(text), Ok(id) if id != ZoneId::NULL)
+}
+
+/// `dgg`'s parents or children less the three kinds the library never hands out: the null zone,
+/// an identifier the engine cannot read back, and a repeat. The marks stay with what is kept.
+fn engine_list_less_three(grid: &AnyGrid, list: &Marked) -> Marked {
+    let mut kept: Marked = Vec::new();
+    for (z, mark) in list {
+        if readable(grid, z) && !kept.iter().any(|(k, _)| k == z) {
+            kept.push((z.clone(), *mark));
+        }
+    }
+    kept
+}
+
+/// The parents and children of a card of an aperture-7 grid against `dgg`'s: the same zones in
+/// the same order, less the three kinds dropped; the same child marked; and the parent marked
+/// that the library names as the centroid parent, where `dgg` marks none.
+fn compare_hierarchy_on_aperture_7(
+    grid: &AnyGrid,
+    ours: &ToolCard,
+    theirs: &DggCard,
+    context: &str,
+    counts: &mut Counts,
+) {
+    let id = grid.zone_from_text(&ours.id).unwrap();
+    let parents = engine_list_less_three(grid, &theirs.parents);
+    let children = engine_list_less_three(grid, &theirs.children);
+    let dropped = theirs.parents.len() - parents.len() + theirs.children.len() - children.len();
+    counts.hierarchy_cards += 1;
+    counts.hierarchy_dropped += dropped;
+    counts.hierarchy_cards_with_drops += usize::from(dropped > 0);
+    // DGGAL answers no centroid parent for any zone of these grids, so `dgg` marks no parent.
+    // A `dgg` that marked one would fail here, and so be noticed.
+    assert!(
+        theirs.parents.iter().all(|p| !p.1),
+        "dgg marks a parent: {context}"
+    );
+    // The tool marks the library's: the first parent that is itself a centroid child.
+    let centroid_parent = grid.centroid_parent(id).map(|z| grid.text_id(z));
+    let expected: Marked = parents
+        .iter()
+        .map(|(p, _)| (p.clone(), Some(p) == centroid_parent.as_ref()))
+        .collect();
+    assert_eq!(ours.parents, expected, "parents: {context}");
+    counts.marked_parents += ours.parents.iter().filter(|p| p.1).count();
+    assert_eq!(ours.children, children, "children: {context}");
+}
+
+/// Identifiers on one of the two broken seams of the aperture-7 grids, which their text alone
+/// reaches, and at which `dgg`'s lists hold what the library drops: an identifier the engine
+/// cannot read and a repeat among the children of the first; a repeated parent, and those two
+/// kinds among the children, at the second; and at the third no parent at all, above
+/// resolution 0, and the null zone among the children.
+const SEAM_CARDS: [&str; 3] = [
+    "0000000000000001644",
+    "0000000000000000136",
+    "00000000000000001311",
+];
+
 /// The leading integer of `s` after ` by `.
 fn after_by(s: &str) -> i64 {
     let rest = s.split(" by ").nth(1).expect("a difference by");
@@ -374,7 +455,15 @@ struct Counts {
     relation_lines: usize,
     neighbour_lists: usize,
     dropped_neighbours: usize,
-    geometric_differs: usize,
+    hierarchy_cards: usize,
+    hierarchy_cards_with_drops: usize,
+    hierarchy_dropped: usize,
+    marked_parents: usize,
+    no_cell_entries: usize,
+    unreadable_entries: usize,
+    firsts: usize,
+    firsts_not_asked: usize,
+    depth_0_firsts_differing: usize,
     coarse_zones: usize,
     sub_lists: usize,
     sub_corrected: usize,
@@ -382,14 +471,7 @@ struct Counts {
     indices: usize,
 }
 
-fn compare_rel(
-    tool_name: &str,
-    dgg_name: &str,
-    a: &str,
-    b: &str,
-    aperture3: bool,
-    counts: &mut Counts,
-) {
+fn compare_rel(tool_name: &str, dgg_name: &str, a: &str, b: &str, counts: &mut Counts) {
     let t = tool_ok(&[tool_name, "rel", a, b]);
     let d = dgg(&[dgg_name, "rel", a, b]);
     let context = format!("{tool_name} rel {a} {b}\ntool:\n{t}\ndgg:\n{d}");
@@ -405,9 +487,6 @@ fn compare_rel(
     );
     counts.relation_lines += 1;
     for (name, ours, theirs) in RELATIONS {
-        if !aperture3 && name != "neighbours" {
-            continue;
-        }
         // The tool's neighbours line must be the positive one, not "are not neighbours".
         let ours_says = t
             .lines()
@@ -508,29 +587,7 @@ fn run_grid(tool_name: &str, dgg_name: &str, aperture3: bool) {
                 assert_eq!(ours.parents, theirs.parents, "parents: {context}");
                 assert_eq!(ours.children, theirs.children, "children: {context}");
             } else {
-                let own_parents: Vec<String> = grid
-                    .parents(id)
-                    .into_iter()
-                    .map(|z| grid.text_id(z))
-                    .collect();
-                let own_children: Vec<String> = grid
-                    .children(id)
-                    .into_iter()
-                    .map(|z| grid.text_id(z))
-                    .collect();
-                assert!(
-                    ours.parents.iter().all(|p| !p.1),
-                    "a marked parent: {context}"
-                );
-                let tp: Vec<String> = ours.parents.iter().map(|x| x.0.clone()).collect();
-                let tc: Vec<String> = ours.children.iter().map(|x| x.0.clone()).collect();
-                assert_eq!(tp, own_parents, "parents: {context}");
-                assert_eq!(tc, own_children, "children: {context}");
-                let tdp: Vec<String> = theirs.parents.iter().map(|x| x.0.clone()).collect();
-                let tdc: Vec<String> = theirs.children.iter().map(|x| x.0.clone()).collect();
-                if tp != tdp || tc != tdc {
-                    counts.geometric_differs += 1;
-                }
+                compare_hierarchy_on_aperture_7(&grid, &ours, &theirs, &context, &mut counts);
             }
 
             // The relations of this zone.
@@ -546,42 +603,61 @@ fn run_grid(tool_name: &str, dgg_name: &str, aperture3: bool) {
                     pairs.push((ours.id.clone(), grid.text_id(*g)));
                 }
             }
+            // The last child, which on aperture 7 lies under a neighbouring zone as well; and
+            // the first and the last, which are siblings.
+            if let (Some((first, _)), Some((last, _))) =
+                (ours.children.first(), ours.children.last())
+            {
+                pairs.push((ours.id.clone(), last.clone()));
+                pairs.push((first.clone(), last.clone()));
+            }
             if !others.is_empty() {
                 pairs.push((ours.id.clone(), others[(k + 1) % others.len()].clone()));
             }
             for (a, b) in pairs {
-                compare_rel(tool_name, dgg_name, &a, &b, aperture3, &mut counts);
+                compare_rel(tool_name, dgg_name, &a, &b, &mut counts);
             }
         }
     }
 
     if aperture3 {
         sub_and_index(&grid, tool_name, dgg_name, &points, &mut counts);
+    } else {
+        for text in SEAM_CARDS {
+            let ours = parse_tool_card(&tool_ok(&[tool_name, "info", text]));
+            let theirs = parse_dgg_card(&dgg(&[dgg_name, "info", text]));
+            let context = format!("{tool_name} info {text}\ntool: {ours:?}\ndgg: {theirs:?}");
+            assert_eq!(ours.id, theirs.id, "{context}");
+            compare_hierarchy_on_aperture_7(&grid, &ours, &theirs, &context, &mut counts);
+        }
+        sub_and_index_on_aperture_7(&grid, tool_name, dgg_name, &points, &mut counts);
     }
 
     println!(
         "{tool_name}: {} zone cards ({} points answered as the null zone, left out), \
          {} neighbour lists ({} entries of the engine's dropped), {} relations \
-         ({} lines compared), {} aperture-7 zones where dgg's geometric hierarchy differs, \
-         {} sub-zone lists (three depths of each of {} zones at resolutions 0 and 1, 30 others, \
-         6 at the south pole and one rhombus-edge zone; {} where dgg's holds a repeat or a \
-         non-descendant, with {} entries of those that `dgg index` does not find), {} indices",
+         ({} lines compared)",
         counts.zones,
         counts.nulls,
         counts.neighbour_lists,
         counts.dropped_neighbours,
         counts.relations,
         counts.relation_lines,
-        counts.geometric_differs,
-        counts.sub_lists,
-        counts.coarse_zones,
-        counts.sub_corrected,
-        counts.index_not_found,
-        counts.indices,
     );
     assert!(counts.zones >= 150, "zone cards: {}", counts.zones);
     assert!(counts.relations >= 150, "relations: {}", counts.relations);
     if aperture3 {
+        println!(
+            "{tool_name}: {} sub-zone lists (three depths of each of {} zones at resolutions 0 \
+             and 1, 30 others, 6 at the south pole and one rhombus-edge zone; {} where dgg's \
+             holds a repeat or a non-descendant, with {} entries of those that `dgg index` does \
+             not find), {} indices",
+            counts.sub_lists,
+            counts.coarse_zones,
+            counts.sub_corrected,
+            counts.index_not_found,
+            counts.indices,
+        );
         assert!(
             counts.sub_corrected >= 1,
             "no rhombus-edge order was corrected"
@@ -591,7 +667,241 @@ fn run_grid(tool_name: &str, dgg_name: &str, aperture3: bool) {
             "sub-zone lists: {}",
             counts.sub_lists
         );
+    } else {
+        println!(
+            "{tool_name}: {} cards whose parents and children are dgg's less the three kinds \
+             dropped ({} of them with a drop, {} entries dropped in all; {} parents marked, \
+             where dgg marks none), {} sub-zone lists (three depths of each of {} zones at \
+             resolutions 0 and 1, 30 others, and one on a seam at depth 5; {} positions with no \
+             cell, {} of them an identifier of dgg's that cannot be read), {} first sub-zones \
+             ({} not asked of dgg, which the engine would end), {} of {} first sub-zones at \
+             depth 0 where dgg by index is not the zone itself, {} indices",
+            counts.hierarchy_cards,
+            counts.hierarchy_cards_with_drops,
+            counts.hierarchy_dropped,
+            counts.marked_parents,
+            counts.sub_lists,
+            counts.coarse_zones,
+            counts.no_cell_entries,
+            counts.unreadable_entries,
+            counts.firsts,
+            counts.firsts_not_asked,
+            counts.depth_0_firsts_differing,
+            counts.coarse_zones,
+            counts.indices,
+        );
+        // Each as measured. Of the cards, one of the sample has a drop (the zone at the north
+        // pole at resolution 15, on a seam, among whose children dgg names two twice) and the
+        // three seam cards have 25 between them: 9, 5 and 11.
+        assert_eq!(counts.hierarchy_cards, counts.zones + SEAM_CARDS.len());
+        assert_eq!(
+            (counts.hierarchy_cards_with_drops, counts.hierarchy_dropped),
+            (4, 27),
+            "{tool_name}"
+        );
+        assert!(
+            counts.marked_parents >= 30,
+            "parents marked: {}",
+            counts.marked_parents
+        );
+        assert_eq!(counts.coarse_zones, 84, "{tool_name}");
+        assert_eq!(
+            (counts.sub_lists, counts.indices),
+            (283, 283),
+            "{tool_name}"
+        );
+        // The 99 positions are those of the seam zone's order at depth 5, each the null zone
+        // in dgg's own list.
+        assert_eq!(
+            (counts.no_cell_entries, counts.unreadable_entries),
+            (99, 0),
+            "{tool_name}"
+        );
+        // The one first sub-zone not asked is that of `110` at depth 2.
+        assert_eq!(
+            (counts.firsts, counts.firsts_not_asked),
+            (282, 1),
+            "{tool_name}"
+        );
+        assert_eq!(counts.depth_0_firsts_differing, 84, "{tool_name}");
     }
+}
+
+/// What the tool prints in a sub-zone order at a position that holds no zone.
+const NO_CELL: &str = "(no cell)";
+
+/// Whether `dgg` is not to be asked for sub-zone 0 of `zone` at `depth`: at the pentagon of base
+/// cell 11, the southern polar one, at an odd resolution and at depth 2, DGGAL's first sub-zone
+/// ends the process. The list of that same order is answered, and is asked.
+fn the_first_sub_zone_ends_dgg(zone: &str, depth: u8) -> bool {
+    depth == 2
+        && zone.len() % 2 == 1
+        && zone.starts_with("11")
+        && zone[2..].bytes().all(|b| b == b'0')
+}
+
+/// The entries of the tool's list of sub-zones, in order.
+fn tool_sub_zones(tool_name: &str, zone: &str, depth: u8) -> Vec<String> {
+    tool_ok(&[tool_name, "sub", zone, "-depth", &depth.to_string()])
+        .lines()
+        .skip(1)
+        .map(|l| l.trim_start().split_once("  ").unwrap().1.to_string())
+        .collect()
+}
+
+/// The tool's sub-zone at an index, which must be the entry given.
+fn assert_tool_sub_zone_at(tool_name: &str, zone: &str, depth: u8, index: usize, entry: &str) {
+    let args = [
+        tool_name,
+        "sub",
+        zone,
+        &index.to_string(),
+        "-depth",
+        &depth.to_string(),
+    ];
+    let expected = format!("sub-zone {index} of {zone} at depth {depth}: {entry}");
+    assert_eq!(tool_ok(&args).trim_end(), expected, "{args:?}");
+}
+
+/// `dgg`'s sub-zone at an index: the zone, or `None` where it says that the index is invalid,
+/// as it does where the zone at the index is the null zone.
+fn dgg_sub_zone_at(dgg_name: &str, zone: &str, depth: u8, index: usize) -> Option<String> {
+    let args = [
+        dgg_name,
+        "sub",
+        zone,
+        "-depth",
+        &depth.to_string(),
+        &index.to_string(),
+    ];
+    let (answered, out) = dgg_raw(&args);
+    if !answered {
+        assert!(out.contains("Invalid zone index"), "dgg {args:?}: {out}");
+        return None;
+    }
+    let zones = json_strings(&out);
+    assert_eq!(zones.len(), 1, "dgg {args:?}: {out}");
+    zones.into_iter().next()
+}
+
+/// The sub-zone orders of an aperture-7 grid against `dgg`'s: the list entry by entry, the first
+/// sub-zone by its index, and the index of an entry half-way along.
+fn sub_and_index_on_aperture_7(
+    grid: &AnyGrid,
+    tool_name: &str,
+    dgg_name: &str,
+    points: &[String],
+    counts: &mut Counts,
+) {
+    // Thirty zones at resolutions 0 to 16, each at one of the depths 1 to 3.
+    let mut rng = Lcg(0xC0FF_EE5E_ED12_3400);
+    let mut cases: Vec<(ZoneId, u8)> = Vec::new();
+    for k in 0..30 {
+        let res = (rng.unit() * 17.0) as u8;
+        let p = &points[(rng.unit() * points.len() as f64) as usize];
+        let (lat, lon) = p.split_once(',').unwrap();
+        let id = grid
+            .zone_from_geo(lat.parse().unwrap(), lon.parse().unwrap(), res)
+            .unwrap();
+        assert_ne!(id, ZoneId::NULL, "{tool_name}: {p} at resolution {res}");
+        cases.push((id, (k % 3 + 1) as u8));
+    }
+    // Every zone of resolutions 0 and 1, the twelve pentagons of each among them, at depths 1 to
+    // 3; and at depth 0, where the order is the zone alone.
+    let mut coarse: Vec<ZoneId> = (0..12)
+        .map(|base| grid.zone_from_text(&format!("{base:02}")).unwrap())
+        .collect();
+    for id in coarse.clone() {
+        coarse.extend(grid.sub_zones(id, 1).unwrap());
+    }
+    coarse.sort_by_key(|z| z.0);
+    coarse.dedup();
+    counts.coarse_zones = coarse.len();
+    for id in coarse {
+        for depth in 0..=3 {
+            cases.push((id, depth));
+        }
+    }
+    // A zone on one of the two broken seams, whose order at depth 5 has positions with no zone.
+    cases.push((grid.zone_from_text("010004000400").unwrap(), 5));
+
+    for (id, depth) in cases {
+        let text = grid.text_id(id);
+        let depth_text = depth.to_string();
+        let context = format!("{tool_name} sub {text} depth {depth}");
+
+        // The list: dgg's own, with the tool's words wherever dgg's entry is no zone.
+        let ours = tool_sub_zones(tool_name, &text, depth);
+        let theirs = json_strings(&dgg(&[dgg_name, "sub", &text, "-depth", &depth_text]));
+        assert_eq!(ours.len(), theirs.len(), "{context}");
+        for (i, (o, t)) in ours.iter().zip(&theirs).enumerate() {
+            if readable(grid, t) {
+                assert_eq!(o, t, "{context}: position {i}");
+            } else {
+                assert_eq!(o, NO_CELL, "{context}: position {i}, where dgg has {t}");
+                counts.no_cell_entries += 1;
+                counts.unreadable_entries += usize::from(t != "(null)");
+            }
+        }
+
+        // The first sub-zone, by its index: the first entry of the list.
+        assert_tool_sub_zone_at(tool_name, &text, depth, 0, &ours[0]);
+        if depth == 0 {
+            // The order is the zone alone, and the tool answers it; dgg by index answers
+            // another zone.
+            assert_eq!(theirs, [text.as_str()], "{context}");
+            let by_index = dgg_sub_zone_at(dgg_name, &text, depth, 0);
+            counts.depth_0_firsts_differing += usize::from(by_index.as_ref() != Some(&text));
+            continue;
+        }
+        counts.sub_lists += 1;
+        if the_first_sub_zone_ends_dgg(&text, depth) {
+            counts.firsts_not_asked += 1;
+        } else {
+            let by_index = dgg_sub_zone_at(dgg_name, &text, depth, 0);
+            let expected = readable(grid, &theirs[0]).then(|| theirs[0].clone());
+            assert_eq!(by_index, expected, "{context}: dgg's first sub-zone");
+            counts.firsts += 1;
+        }
+
+        // The index of the entry half-way along, or of the first after it that is a zone and
+        // that the order holds once.
+        let middle = (ours.len() / 2..ours.len())
+            .find(|&i| ours[i] != NO_CELL && ours.iter().filter(|o| **o == ours[i]).count() == 1)
+            .unwrap_or_else(|| panic!("{context}: no entry to ask the index of"));
+        let sub = &ours[middle];
+        let index_text = tool_ok(&[tool_name, "index", &text, sub]);
+        let expected = format!("{sub} is sub-zone {middle} of {text}, at depth {depth}");
+        assert_eq!(index_text.trim(), expected, "{context}");
+        let d = dgg(&[dgg_name, "index", &text, sub]);
+        let expected = format!("{sub} is at index {middle} of {text} at depth {depth}");
+        assert_eq!(d.lines().last().unwrap().trim(), expected, "{context}: {d}");
+        counts.indices += 1;
+    }
+
+    // Along the seams the engine's index of a sub-zone may be a position at which its own order
+    // holds another zone. The tool states an index only where the order holds the sub-zone at
+    // it, and here says that there is none: the order holds the sub-zone at position 3, and
+    // `dgg` says 6.
+    let (zone, sub) = ("00000000000000000", "000000000000000001");
+    let list = json_strings(&dgg(&[dgg_name, "sub", zone, "-depth", "1"]));
+    assert_eq!(tool_sub_zones(tool_name, zone, 1), list, "{tool_name}");
+    assert_eq!(
+        (list[3].as_str(), list[6].as_str()),
+        (sub, "000000000000000000"),
+        "{tool_name}"
+    );
+    let d = dgg(&[dgg_name, "index", zone, sub]);
+    assert_eq!(
+        d.lines().last().unwrap().trim(),
+        format!("{sub} is at index 6 of {zone} at depth 1"),
+        "{tool_name}"
+    );
+    assert_eq!(
+        tool_ok(&[tool_name, "index", zone, sub]),
+        format!("{sub} has no index among the sub-zones of {zone}\n"),
+        "{tool_name}"
+    );
 }
 
 fn sub_and_index(
@@ -718,6 +1028,124 @@ fn sub_and_index(
             assert_eq!(d.lines().last().unwrap().trim(), expected, "{context}: {d}");
         }
     }
+}
+
+/// `dgg`'s sub-zone by its index against its own list, and the tool against that list, at every
+/// index of the orders of one zone at depths 1 to 3: how many indices were compared, at how
+/// many of each depth `dgg` by index is not the entry of its list, and how many were not asked.
+fn by_index_at(tool_name: &str, dgg_name: &str, zone: &str) -> (usize, [usize; 3], usize) {
+    let (mut compared, mut differing, mut not_asked) = (0, [0; 3], 0);
+    for depth in 1..=3u8 {
+        let list = json_strings(&dgg(&[dgg_name, "sub", zone, "-depth", &depth.to_string()]));
+        for (i, entry) in list.iter().enumerate() {
+            // The tool answers the entry of the order at the index, at every index.
+            assert_tool_sub_zone_at(tool_name, zone, depth, i, entry);
+            if i == 0 && the_first_sub_zone_ends_dgg(zone, depth) {
+                not_asked += 1;
+                continue;
+            }
+            compared += 1;
+            if dgg_sub_zone_at(dgg_name, zone, depth, i).as_ref() != Some(entry) {
+                differing[usize::from(depth) - 1] += 1;
+            }
+        }
+    }
+    (compared, differing, not_asked)
+}
+
+/// DGGAL's search for a sub-zone by its index is at fault at the pentagons: there `dgg` by index
+/// answers, at some indices, a zone that is not the entry of its own list, where the tool
+/// answers the entry. Measured here at the twelve pentagons of resolutions 0 and 1 and at three
+/// hexagons, at depths 1 to 3 and at every index, each zone in a thread of its own.
+fn sub_zone_by_index_against_dgg(tool_name: &str, dgg_name: &str) {
+    // Each zone with the indices at which `dgg` by index is not the entry of its own list, at
+    // depths 1, 2 and 3, exactly as measured, so that an engine corrected, or at fault
+    // elsewhere, is noticed. The fault lies at the odd depths, and at depth 1 only at a
+    // pentagon of an even resolution; the five pentagons of base cells 6 to 10 have about half
+    // as many faulty indices as the other seven. At depth 2, and at a hexagon, there is none.
+    let mut zones: Vec<(String, [usize; 3])> = Vec::new();
+    // The pentagons are the base cells and, below them, their centre children: every digit 0.
+    for level in 0..=1usize {
+        for base in 0..12 {
+            let expected = match ((6..=10).contains(&base), level) {
+                (false, 0) => [2, 0, 115],
+                (true, 0) => [1, 0, 54],
+                (false, _) => [0, 0, 97],
+                (true, _) => [0, 0, 53],
+            };
+            zones.push((format!("{base:02}{}", "0".repeat(level)), expected));
+        }
+    }
+    let pentagons = zones.len();
+    for hexagon in ["006", "0064", "00641"] {
+        zones.push((hexagon.to_string(), [0, 0, 0]));
+    }
+    let results: Vec<(usize, [usize; 3], usize)> = std::thread::scope(|scope| {
+        let threads: Vec<_> = zones
+            .iter()
+            .map(|(zone, _)| scope.spawn(move || by_index_at(tool_name, dgg_name, zone)))
+            .collect();
+        threads.into_iter().map(|t| t.join().unwrap()).collect()
+    });
+
+    let (mut compared, mut differing, mut not_asked) = (0, 0, 0);
+    for (k, ((zone, expected), (c, d, n))) in zones.iter().zip(&results).enumerate() {
+        compared += c;
+        differing += d.iter().sum::<usize>();
+        not_asked += n;
+        assert_eq!(d, expected, "{tool_name} {zone}: indices where dgg differs");
+        // Whatever the table above becomes, every pentagon shows the fault at an odd depth.
+        if k < pentagons {
+            assert!(d[0] + d[2] >= 1, "{tool_name} {zone}: no index differs");
+        }
+    }
+    // One of them by name: sub-zone 9 of `00` at depth 1 is `006`, and `dgg` by index says `030`,
+    // which is not in its list at all.
+    let list = json_strings(&dgg(&[dgg_name, "sub", "00", "-depth", "1"]));
+    assert_eq!(list[9], "006", "{tool_name}");
+    assert!(list.iter().all(|z| z != "030"), "{tool_name}: {list:?}");
+    assert_eq!(
+        dgg_sub_zone_at(dgg_name, "00", 1, 9).as_deref(),
+        Some("030"),
+        "{tool_name}"
+    );
+    assert_tool_sub_zone_at(tool_name, "00", 1, 9, "006");
+
+    println!(
+        "{tool_name}: {compared} indices of {} orders asked of dgg by index and of the tool \
+         ({pentagons} pentagons and {} hexagons at depths 1 to 3); at {differing} of them, all \
+         at pentagons at depths 1 and 3, dgg by index is not the entry of its own list, which \
+         the tool answers at every one; {not_asked} not asked of dgg, which the engine would end",
+        3 * zones.len(),
+        zones.len() - pentagons,
+    );
+    // 373 indices at each pentagon, 447 at each hexagon, less the one not asked: the first
+    // sub-zone of `110` at depth 2.
+    assert_eq!(
+        (compared, not_asked),
+        (24 * 373 + 3 * 447 - 1, 1),
+        "{tool_name}"
+    );
+    assert_eq!(
+        differing,
+        7 * (2 + 115) + 5 * (1 + 54) + 7 * 97 + 5 * 53,
+        "{tool_name}"
+    );
+}
+
+#[test]
+fn igeo7_sub_zone_by_index_against_dgg() {
+    sub_zone_by_index_against_dgg("igeo7", "isea7h_z7");
+}
+
+#[test]
+fn ivea7h_sub_zone_by_index_against_dgg() {
+    sub_zone_by_index_against_dgg("ivea7h", "ivea7h_z7");
+}
+
+#[test]
+fn rtea7h_sub_zone_by_index_against_dgg() {
+    sub_zone_by_index_against_dgg("rtea7h", "rtea7h_z7");
 }
 
 #[test]

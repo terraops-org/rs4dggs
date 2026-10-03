@@ -7,7 +7,6 @@ mod batch;
 mod commands;
 mod csv;
 mod geojson;
-mod rings;
 mod text;
 
 use std::io::{self, BufRead, Write};

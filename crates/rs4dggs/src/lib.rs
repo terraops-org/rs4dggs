@@ -5,6 +5,7 @@
 
 mod disk;
 pub mod error;
+mod facts;
 mod fivebysix;
 pub mod grid;
 pub mod indexings;
@@ -15,6 +16,7 @@ pub mod registry;
 pub mod topologies;
 pub mod types;
 pub mod zone;
+mod zones;
 
 pub use disk::{Disk, Rings};
 pub use error::{Error, Result};
@@ -24,5 +26,6 @@ pub use registry::{
     AnyGrid, GRID_NAMES, Igeo7, Isea3h, Ivea3h, Ivea7h, Rtea3h, Rtea7h, get_grid, igeo7, isea3h,
     ivea3h, ivea7h, rtea3h, rtea7h,
 };
-pub use types::{Address, GeoPoint, GridConfig, NULL_TEXT, PlanarPoint, ZoneId};
+pub use types::{Address, Extent, GeoPoint, GridConfig, NULL_TEXT, PlanarPoint, ZoneId};
 pub use zone::Zone;
+pub use zones::{Zones, ZonesInBox};

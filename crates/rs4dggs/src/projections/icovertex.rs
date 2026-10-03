@@ -49,7 +49,9 @@
 //! line it replaces. The longitude wrap that ends the inverse, the eC's `wrapLon`, which
 //! also carries no attribute, is performed in its compiled form too, although neither of
 //! its branches is entered on the registered grids and no answer there turns on it (see
-//! `wrap_lon`). Elsewhere the eC's source text decides; the few sites that keep another
+//! `wrap_lon`); and so is its fellow `wrapLonAt`, with which the engine unwraps the refined
+//! boundary of a zone about its centroid (see `wrap_lon_at`). Elsewhere the eC's source text
+//! decides; the few sites that keep another
 //! form, py4dggs's among them, say so, each with the evidence that it changes no answer
 //! on the registered grids. With these orders every cached geometry field is
 //! bit-identical to the engine's own, and so are the forward projection at each of the
@@ -1280,6 +1282,18 @@ pub(crate) fn geodetic_to_authalic(geom: &IcoGeometry, lat_rad: f64) -> f64 {
     apply_coefficients(&geom.authalic_cp.0, lat_rad)
 }
 
+/// The latitude on the sphere the projection works on, for a geodetic latitude in radians:
+/// [`geodetic_to_authalic`] where the geometry converts latitudes, as [`forward`] does (the
+/// eC's own `latGeodeticToAuthalic` of the projection, `ri5x6.ec:252-255`, called at
+/// `ri5x6.ec:397`), and the latitude itself where it takes them as latitudes on the sphere.
+pub(crate) fn sphere_latitude(geom: &IcoGeometry, lat_rad: f64) -> f64 {
+    if geom.authalic {
+        geodetic_to_authalic(geom, lat_rad)
+    } else {
+        lat_rad
+    }
+}
+
 /// Authalic latitude to geodetic latitude (eC `latAuthalicToGeodetic`,
 /// `authalic.ec:14`). The Karney coefficients live on the geometry.
 pub(crate) fn authalic_to_geodetic(geom: &IcoGeometry, lat_rad: f64) -> f64 {
@@ -1495,14 +1509,39 @@ fn fix_poles(geom: &IcoGeometry, vx: f64, vy: f64, odd_grid: bool) -> Option<(f6
     Some((lat, (turn + q_offset) + lon1))
 }
 
-/// A planar [`PlanarPoint`] back to a geographic [`GeoPoint`] in degrees (eC `inverse`,
-/// `ri5x6.ec:511`). A negative `face` means "derive it from x and y". The edge-wrap
+/// A planar [`PlanarPoint`] back to a geographic [`GeoPoint`] in degrees: the eC's `inverse`
+/// (`ri5x6.ec:511-556`), which is [`inverse_radians`], with each member of its answer
+/// multiplied by `fl(180 / Pi)`, as ecrt converts an angle for the engine's callers.
+///
+/// A point for which the eC's function fails, because no face can be derived for it, comes
+/// back as the zero point, to which the eC clears its result before it returns `false`
+/// (`ri5x6.ec:554-555`); so does a point that names a face above 19, which the icosahedron
+/// does not have.
+pub(crate) fn inverse(geom: &IcoGeometry, p: PlanarPoint, odd_grid: bool) -> GeoPoint {
+    match inverse_radians(geom, p, odd_grid) {
+        Some((lat, lon)) => GeoPoint {
+            lat: lat * math::RAD2DEG,
+            lon: lon * math::RAD2DEG,
+        },
+        None => GeoPoint { lat: 0.0, lon: 0.0 },
+    }
+}
+
+/// A planar [`PlanarPoint`] back to a geographic point in radians, latitude then longitude
+/// (eC `inverse`, `ri5x6.ec:511-556`), or `None` where the eC's function returns `false`.
+/// A negative `face` means "derive it from x and y". The edge-wrap
 /// fixups come first, then the inverse face projection, then the snap onto the poles,
 /// the azimuth offset, the authalic to geodetic conversion and the wrap of the
 /// longitude, in the eC's order (`ri5x6.ec:544-550`).
 ///
-/// A point whose face cannot be derived, because it lies outside the 5x6 layout, comes
-/// back as the zero point, as in the eC; so does a point that names a face above 19,
+/// The eC's function answers in radians and says whether it succeeded, and this is that
+/// function as it stands. [`inverse`] converts it for the callers that want degrees and
+/// take the zero point for a failure. The refined boundary of a zone wants neither: the
+/// eC's `getRefinedVertices` (`RI7H.ec:536-612`, `RI3H.ec:451-673`) leaves out a point whose
+/// inverse fails, and compares neighbouring points in radians.
+///
+/// It fails for a point whose face cannot be derived, because it lies outside the 5x6
+/// layout, as in the eC (`ri5x6.ec:533-534`); and for a point that names a face above 19,
 /// which the icosahedron does not have.
 ///
 /// `odd_grid` is the eC's own `oddGrid` argument. It says whether the point belongs to a
@@ -1534,7 +1573,11 @@ fn fix_poles(geom: &IcoGeometry, vx: f64, vy: f64, odd_grid: bool) -> Option<(f6
 // the first's condition again (`vy < 0 && vx < 0`), so it is never taken; it stays because the
 // eC writes it there (ri5x6.ec:516-531), and Clippy's `ifs_same_cond` is allowed for that reason.
 #[allow(clippy::if_same_then_else, clippy::ifs_same_cond)]
-pub(crate) fn inverse(geom: &IcoGeometry, p: PlanarPoint, odd_grid: bool) -> GeoPoint {
+pub(crate) fn inverse_radians(
+    geom: &IcoGeometry,
+    p: PlanarPoint,
+    odd_grid: bool,
+) -> Option<(f64, f64)> {
     let mut vx = p.x;
     let mut vy = p.y;
     // The eC's eight edge-wrap branches, in its own order (ri5x6.ec:516-531).
@@ -1582,11 +1625,11 @@ pub(crate) fn inverse(geom: &IcoGeometry, p: PlanarPoint, odd_grid: bool) -> Geo
         face = face_after_wrap(vx, vy, wrap, p.x);
     }
     // A face above 19 names no face of the icosahedron, and it is answered as a face
-    // that cannot be derived is, with the zero point. `face_after_wrap` never returns such a
+    // that cannot be derived is, with a failure. `face_after_wrap` never returns such a
     // face, so no faithful answer changes; the bound only keeps a caller's out-of-range
     // face from indexing past the twenty-entry face tables below.
     if !(0..=19).contains(&face) {
-        return GeoPoint { lat: 0.0, lon: 0.0 };
+        return None;
     }
 
     let p3d = inverse_ico_face(geom, face as usize, &[vx, vy]);
@@ -1617,12 +1660,7 @@ pub(crate) fn inverse(geom: &IcoGeometry, p: PlanarPoint, odd_grid: bool) -> Geo
         lat
     };
 
-    let lon_n = wrap_lon(lon);
-
-    GeoPoint {
-        lat: lat_geo * math::RAD2DEG,
-        lon: lon_n * math::RAD2DEG,
-    }
+    Some((lat_geo, wrap_lon(lon)))
 }
 
 /// A longitude in radians brought back within half a turn of zero, the eC's `wrapLon`
@@ -1664,21 +1702,100 @@ fn wrap_lon(x: f64) -> f64 {
     // because the quotient is positive in both branches. The count of turns multiplies
     // `2*Pi` at `0x49f90`, and the product is added to or subtracted from the longitude.
     const LIMIT: f64 = f64::from_bits(0x4009_21fb_5444_2d1d);
-    const ONE_OVER_TWO_PI: f64 = f64::from_bits(0x3fc4_5f30_6dc9_c883);
-    const WHOLE_ABOVE: f64 = 4_503_599_627_370_496.0;
-    let turns = |t: f64| {
-        if t.abs() < WHOLE_ABOVE {
-            t as i64 as f64
-        } else {
-            t
-        }
-    };
     if x < -LIMIT {
-        x + turns((math::PI - x) * ONE_OVER_TWO_PI) * math::TWO_PI
+        x + truncated_turns((math::PI - x) * ONE_OVER_TWO_PI) * math::TWO_PI
     } else if x > LIMIT {
-        x - turns((x + math::PI) * ONE_OVER_TWO_PI) * math::TWO_PI
+        x - truncated_turns((x + math::PI) * ONE_OVER_TWO_PI) * math::TWO_PI
     } else {
         x
+    }
+}
+
+/// `fl(1 / (2*Pi))`, by which the library multiplies where the eC's `wrapLon` and `wrapLonAt`
+/// divide by `2*Pi` (`GeoExtent.ec:29`, `:31`, `:39`, `:41`); `.rodata` at `0x4a548`.
+const ONE_OVER_TWO_PI: f64 = f64::from_bits(0x3fc4_5f30_6dc9_c883);
+
+/// 2^52, at and above which every double is whole: there the library's inlined `floor` of
+/// `wrapLon` and `wrapLonAt` (`GeoExtent.ec:29`, `:31`, `:39`, `:41`) takes the count of turns
+/// as it stands; `.rodata` at `0x4a090`.
+const WHOLE_ABOVE: f64 = 4_503_599_627_370_496.0;
+
+/// `fl(Pi + 1e-7)`, the eC's `Pi + Radians { epsilon }` of `wrapLonAt` (`GeoExtent.ec:38`,
+/// `:40`, with `epsilon` at `:13`), folded into one constant; `.rodata` at `0x4a560`, and its
+/// negation, the folded `-Pi - Radians { epsilon }`, at `0x4a558`.
+const WRAP_LON_AT_LIMIT: f64 = math::PI + 1e-7;
+
+/// A count of turns truncated towards zero, as the library truncates it in `wrapLon` and
+/// `wrapLonAt` where the eC writes `floor` (`GeoExtent.ec:29`, `:31`, `:39`, `:41`): a
+/// `cvttsd2si` to 64 bits and a `cvtsi2sd` back, taken only where the magnitude is below
+/// 2^52, above which the count, or a NaN, is used as it stands.
+fn truncated_turns(t: f64) -> f64 {
+    if t.abs() < WHOLE_ABOVE {
+        t as i64 as f64
+    } else {
+        t
+    }
+}
+
+/// The eC's `wrapLonAt` with `q == -1` (`GeoExtent.ec:35-53`): how far the longitude `lon`
+/// lies from the longitude `c_lon`, both in radians, brought within half a turn of zero. It
+/// answers that offset and does not add `c_lon` back, which the eC's own callers remark and
+/// do themselves (`RI7H.ec:573`, `RI3H.ec:517`). An offset no further from zero than
+/// `Pi + 1e-7`, or NaN, is returned untouched.
+///
+/// The engine builds the refined boundary of a zone with it: each point's longitude is
+/// unwrapped about the zone's centroid, so that the ring of a zone over the antimeridian is
+/// continuous. Both of those callers pass `q == -1`, and the arm for another `q`
+/// (`GeoExtent.ec:42-51`, `0x43191` to `0x432cf`), which chooses a turn by the quadrant of
+/// `c_lon`, is not ported.
+///
+/// The port is the library's function on every input: called directly at its address in the
+/// loaded library with `q == -1`, the library's `wrapLonAt` and this function answered the
+/// same doubles, to the last bit, at 370,208 pairs of a longitude and a centre, of which
+/// 123,293 enter the first branch and 123,457 the second: the two thresholds and `Pi`,
+/// `3 * Pi` and `5 * Pi` of either sign, each about twelve centres and forty units in the last
+/// place either side; every multiple of `Pi` up to `400 * Pi` about four centres, and three
+/// units either side; uniform draws within 4 to 1e300 of zero; pairs drawn within half a turn
+/// of zero; and random bit patterns. The source's own form answers otherwise at 5,004 of
+/// them. None of those is a pair the boundary of a zone presents, a longitude and a centroid
+/// each within half a turn of zero, of which the sample holds 150,066, with 33,820 that enter
+/// a branch: there one turn is counted on either reading. So neither of the two sites below
+/// moves a ring: with either put back in the source's order alone, none of the 413,414 rings
+/// sampled on the six grids left the engine's.
+pub(crate) fn wrap_lon_at(lon: f64, c_lon: f64) -> f64 {
+    // faithful: DGGAL v0.0.6 as built with `-O2 -ffast-math` (`Makefile.dggal:133`),
+    // BuildID `e75d6ab18f8b460713ebcd21df6f07922fb909c3`, `wrapLonAt` at `0x43130`, which
+    // carries no attribute and is called out of line (on the six grids' path, from
+    // `getRefinedVertices` at `0x2aab1` and `0xf789`, among the library's five call sites). The offset `lon - cLon` is formed as written (`0x43140`) and compared
+    // with the two folded thresholds (`0x43144`, `0x431b8`). Both branches multiply by
+    // `fl(1 / (2*Pi))` where the eC divides by `2*Pi`, and take their `floor` inline, only
+    // where the magnitude is below 2^52 (`0x43176`, `0x431ea`). The count of turns
+    // multiplies `2*Pi` at `0x49f90`, and the product is added to the offset or subtracted
+    // from it (`0x43180` to `0x43188`, `0x431f4` to `0x431fc`, `0x4329e` to `0x432a6`).
+    let d = lon - c_lon;
+    if d < -WRAP_LON_AT_LIMIT {
+        // faithful: site WL-1, `GeoExtent.ec:39`, at `0x4314a` to `0x43188`. The eC's
+        // `Pi - lon`, on the offset, is taken on the arguments, re-associated, as
+        // `(Pi + cLon) - lon` (`0x4315a`, `0x4315e`), before the product with the
+        // reciprocal (`0x43162`). The floor is a true one here: the truncation, less one
+        // where it exceeds the count (`0x43208` to `0x4322b`); the count is positive on this
+        // branch, so that the truncation never exceeds it and the correction is inert.
+        let t = ((math::PI + c_lon) - lon) * ONE_OVER_TWO_PI;
+        let truncated = truncated_turns(t);
+        let turns = if truncated > t {
+            truncated - 1.0
+        } else {
+            truncated
+        };
+        d + turns * math::TWO_PI
+    } else if d > WRAP_LON_AT_LIMIT {
+        // faithful: site WL-2, `GeoExtent.ec:41`, at `0x431c2` to `0x431fc`: `Pi` and the
+        // offset are added as written (`0x431da`), the sum multiplies the reciprocal
+        // (`0x431de`), and the floor is the bare truncation (`0x43290` to `0x43299`), which
+        // is the floor, the count being positive there.
+        d - truncated_turns((math::PI + d) * ONE_OVER_TWO_PI) * math::TWO_PI
+    } else {
+        d
     }
 }
 
@@ -1967,6 +2084,91 @@ mod tests {
         assert!(wrap_lon(f64::NAN).is_nan());
     }
 
+    /// The constants of the two wraps are the library's own, read from its `.rodata`: the
+    /// threshold of `wrapLonAt` and its negation, which are `fl(Pi + 1e-7)` and its mirror,
+    /// the reciprocal by which both wraps multiply, and the bound above which a double is
+    /// whole. They pin WL-1 and WL-2, the two compiled sites of `wrapLonAt`, which move no
+    /// ring of the six grids and so cannot be pinned by one.
+    #[test]
+    fn the_constants_of_the_longitude_wraps_match_the_engines_rodata() {
+        assert_eq!(WRAP_LON_AT_LIMIT.to_bits(), 0x4009_21fb_61b0_2665); // 0x4a560
+        assert_eq!((-WRAP_LON_AT_LIMIT).to_bits(), 0xc009_21fb_61b0_2665); // 0x4a558
+        assert_eq!(ONE_OVER_TWO_PI.to_bits(), 0x3fc4_5f30_6dc9_c883); // 0x4a548
+        assert_eq!(ONE_OVER_TWO_PI, 1.0 / math::TWO_PI);
+        assert_eq!(WHOLE_ABOVE.to_bits(), 0x4330_0000_0000_0000); // 0x4a090
+        assert_eq!(math::PI.to_bits(), 0x4009_21fb_5444_2d18); // 0x4a040
+        assert_eq!(math::TWO_PI.to_bits(), 0x4019_21fb_5444_2d18); // 0x49f90
+    }
+
+    /// The wrap about a centre answers as the library's compiled `wrapLonAt` at `0x43130`
+    /// does, called directly at that address with `q == -1`: each row is a longitude, a
+    /// centre and the engine's answer, as bits. The first four are the threshold and one
+    /// unit in the last place beyond it, on either side. The next four are points of WL-1
+    /// where the source's text answers the other end of the half turn: two where its grouping
+    /// `Pi - (lon - cLon)` and the library's `(Pi + cLon) - lon` give different doubles, and two
+    /// where its division by `2*Pi` and the library's product with `fl(1 / (2*Pi))` count
+    /// different turns. The next two are the same division at WL-2. The last three are
+    /// ordinary: a longitude and a centre on either side of the antimeridian, both ways, and a
+    /// pair that needs no wrap.
+    #[test]
+    fn the_longitude_wrap_about_a_centre_is_the_engines() {
+        let cases: [(u64, u64, u64); 13] = [
+            (0x4009_21fb_61b0_2665, 0, 0x4009_21fb_61b0_2665),
+            (0x4009_21fb_61b0_2666, 0, 0xc009_21fb_46d8_33ca),
+            (0xc009_21fb_61b0_2665, 0, 0xc009_21fb_61b0_2665),
+            (0xc009_21fb_61b0_2666, 0, 0x4009_21fb_46d8_33ca),
+            (
+                0xc022_d9ee_e0f7_30af,
+                0xbf4c_9871_03b7_633a,
+                0x4009_21fb_5444_2d1c,
+            ),
+            (
+                0xc019_239c_d570_8113,
+                0x4009_1eb8_51eb_851f,
+                0x4009_21fb_5444_2d1c,
+            ),
+            (
+                0xc04f_6aae_597a_c2dc,
+                0x4009_1eb8_51eb_851f,
+                0x4009_21fb_5444_2d20,
+            ),
+            (0xc050_7e4c_ef4c_bd97, 0, 0x4009_21fb_5444_2d20),
+            (
+                0x404f_8966_ab66_47fa,
+                0xc007_3333_3333_3333,
+                0xc009_21fb_5444_2d20,
+            ),
+            (0x4050_7e4c_ef4c_bd97, 0, 0xc009_21fb_5444_2d20),
+            (
+                0xc008_cccc_cccc_cccd,
+                0x4008_cccc_cccc_cccd,
+                0x3fb5_4ba1_ddd8_12c0,
+            ),
+            (
+                0x4008_cccc_cccc_cccd,
+                0xc008_cccc_cccc_cccd,
+                0xbfb5_4ba1_ddd8_12c0,
+            ),
+            (
+                0x3ff0_0000_0000_0000,
+                0x3fe0_0000_0000_0000,
+                0x3fe0_0000_0000_0000,
+            ),
+        ];
+        for (lon, c_lon, engine) in cases {
+            let (lon, c_lon) = (f64::from_bits(lon), f64::from_bits(c_lon));
+            let ours = wrap_lon_at(lon, c_lon);
+            assert_eq!(
+                ours.to_bits(),
+                engine,
+                "{lon:e} about {c_lon:e}: {ours:e} against the engine's {:e}",
+                f64::from_bits(engine)
+            );
+        }
+        assert!(wrap_lon_at(f64::NAN, 0.0).is_nan());
+        assert!(wrap_lon_at(0.0, f64::NAN).is_nan());
+    }
+
     /// The sub-triangle area is the constant the library loads from `0x4a450`, one unit
     /// in the last place above the product a conversion at run time gives, and the double
     /// nearest to the sixteen decimal places the eC compiler writes for `Degrees { 6 }`.
@@ -2145,5 +2347,69 @@ mod tests {
             let q = inverse(&g, PlanarPoint { face: -1, x, y }, odd);
             assert_eq!((q.lat, q.lon), engine, "({x}, {y}), odd {odd}");
         }
+    }
+
+    /// The inverse in radians is the eC's `inverse` with its own return value
+    /// (`ri5x6.ec:511-556`): `None` where the eC answers `false`, which is where no face can be
+    /// derived, and the point in radians elsewhere. The inverse in degrees is that one and no
+    /// more: the zero point for a failure, and each member's product with `fl(180 / Pi)` for a
+    /// success. The sample is a lattice of quarter steps that overruns the 5x6 layout on every
+    /// side, with the four pole images, on each of the three projections and under both
+    /// parities.
+    #[test]
+    fn the_inverse_in_degrees_is_the_inverse_in_radians_converted() {
+        let mut sample: Vec<(f64, f64)> = vec![(0.5, 0.0), (5.0, 4.5), (1.5, 3.0), (2.0, 3.5)];
+        for i in -2..=22 {
+            for j in -2..=26 {
+                sample.push((f64::from(i) * 0.25, f64::from(j) * 0.25));
+            }
+        }
+        let (mut answered, mut failed) = (0, 0);
+        for radial in [RadialVertex::Isea, RadialVertex::Ivea, RadialVertex::Rtea] {
+            let geom = build_geometry(&GridConfig::default(), radial);
+            for &(x, y) in &sample {
+                for odd in [false, true] {
+                    let p = PlanarPoint { face: -1, x, y };
+                    let degrees = inverse(&geom, p, odd);
+                    let got = (degrees.lat.to_bits(), degrees.lon.to_bits());
+                    match inverse_radians(&geom, p, odd) {
+                        Some((lat, lon)) => {
+                            let want = (lat * math::RAD2DEG, lon * math::RAD2DEG);
+                            assert_eq!(got, (want.0.to_bits(), want.1.to_bits()), "({x}, {y})");
+                            answered += 1;
+                        }
+                        None => {
+                            assert_eq!(got, (0.0_f64.to_bits(), 0.0_f64.to_bits()), "({x}, {y})");
+                            failed += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!((answered, failed), (1_446, 2_928));
+
+        let g = build_geometry(&GridConfig::default(), RadialVertex::Isea);
+        // Outside the layout: no face, so a failure, where the degrees answer the zero point.
+        let outside = PlanarPoint {
+            face: -1,
+            x: 3.0,
+            y: 0.5,
+        };
+        assert_eq!(inverse_radians(&g, outside, true), None);
+        // A face the icosahedron does not have is a failure too.
+        let no_such_face = PlanarPoint {
+            face: 20,
+            x: 0.5,
+            y: 0.5,
+        };
+        assert_eq!(inverse_radians(&g, no_such_face, true), None);
+        // The north pole's image is the pole itself, in radians.
+        let pole = PlanarPoint {
+            face: -1,
+            x: 0.5,
+            y: 0.0,
+        };
+        let (lat, _) = inverse_radians(&g, pole, true).unwrap();
+        assert_eq!(lat.to_bits(), (math::PI / 2.0).to_bits());
     }
 }

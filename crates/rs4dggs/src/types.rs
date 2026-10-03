@@ -14,6 +14,24 @@ pub struct GeoPoint {
     pub lon: f64,
 }
 
+/// The geographic extent of a zone: the least and the greatest latitude of its boundary, and
+/// the longitudes of its westernmost and easternmost points, in decimal degrees, as
+/// [`crate::Grid::extent`] gives it.
+///
+/// `ll` is the lower left corner, the south and the west; `ur` the upper right, the north and
+/// the east. Both longitudes lie between -180 and 180. Where the zone lies over the
+/// antimeridian the western end is the greater of the two, so that `ll.lon > ur.lon`: a caller
+/// reads that as an extent that runs eastwards from `ll.lon` through 180 degrees to `ur.lon`,
+/// and must not take the two for the bounds of an interval. Where the zone touches a pole,
+/// `ur.lat` is exactly 90, or `ll.lat` exactly -90.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Extent {
+    /// The lower left corner: the least latitude and the western end.
+    pub ll: GeoPoint,
+    /// The upper right corner: the greatest latitude and the eastern end.
+    pub ur: GeoPoint,
+}
+
 /// A point in a projection's planar space.
 ///
 /// `face` carries the icosahedron face id for an icosahedral projection, or a
