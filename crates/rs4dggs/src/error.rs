@@ -86,6 +86,14 @@ pub enum Error {
         /// How many sub-zones there are at the depth requested.
         count: u64,
     },
+    /// `part` is not one of `parts` parts of the walk of a level ([`crate::Grid::zones_part`]):
+    /// `parts` is nought, or `part` is not below it.
+    PartOutOfRange {
+        /// The part requested, from nought.
+        part: u64,
+        /// How many parts the walk was asked to be cut into.
+        parts: u64,
+    },
     /// A number the caller supplied is NaN or infinite, where only a finite one
     /// has a meaning: a coordinate given to `zone_from_geo`, a coordinate of the
     /// bounding box given to [`crate::Grid::zones_in_box`] or
@@ -218,6 +226,12 @@ impl fmt::Display for Error {
                 "{count} sub-zones exceeds the {limit} materialisation limit; \
                  use count_sub_zones() for the count, or refine in smaller steps"
             ),
+            Error::PartOutOfRange { part, parts } => {
+                write!(
+                    f,
+                    "part {part} out of range: the walk is cut into {parts} part(s)"
+                )
+            }
             Error::IndexOutOfRange { index, count } => {
                 write!(
                     f,

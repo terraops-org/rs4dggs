@@ -1852,6 +1852,25 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
     /// The walk of the lattice of `level` from its first zone, or
     /// [`Error::ResolutionOutOfRange`] for a level beyond [`Grid::max_box_level`], carrying
     /// that limit as its `max`.
+    /// Part `part` of `parts` of [`Grid::lattice_walk`]; see [`Grid::zones_part`].
+    pub(crate) fn lattice_walk_part(
+        &self,
+        level: u8,
+        part: u64,
+        parts: u64,
+    ) -> Result<crate::zones::Walk> {
+        if part >= parts {
+            return Err(Error::PartOutOfRange { part, parts });
+        }
+        self.lattice_walk(level)?;
+        Ok(crate::zones::Walk::part(
+            level,
+            T::lattice_edge(Private, level),
+            part,
+            parts,
+        ))
+    }
+
     pub(crate) fn lattice_walk(&self, level: u8) -> Result<crate::zones::Walk> {
         let max = self.max_box_level();
         if level > max {
@@ -1940,6 +1959,36 @@ impl<P: Projection, T: Topology, I: Indexing> Grid<P, T, I> {
     /// ```
     pub fn zones(&self, level: u8) -> Result<crate::Zones<&Self>> {
         Ok(crate::Zones::new(self, self.lattice_walk(level)?))
+    }
+
+    /// Part `part` of `parts` of [`Grid::zones`]: the walk of `level` cut, between rows of its
+    /// lattice, into `parts` contiguous runs of about the same number of zones, so that
+    /// several threads may walk one level each its own part. The parts, part 0 first, are
+    /// [`Grid::zones`] zone for zone; each costs what the same zones cost in the whole walk, and
+    /// none is visited by another. A part may be empty, when `parts` exceeds the rows of the
+    /// level (ten rhombi of rows and two polar roots).
+    ///
+    /// [`Zones::after`](crate::Zones::after) enters a part after one of its zones, and the part
+    /// still ends where it ends; after a zone of an earlier part the part is given from its
+    /// start, after a zone of a later one it is empty.
+    ///
+    /// [`Error::PartOutOfRange`] when `parts` is nought or `part` is not below it, and
+    /// [`Error::ResolutionOutOfRange`] beyond [`Grid::max_box_level`] as for [`Grid::zones`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let grid = rs4dggs::igeo7();
+    /// let whole: Vec<_> = grid.zones(3)?.collect();
+    /// let parts: Vec<_> = (0..4).flat_map(|k| grid.zones_part(3, k, 4).unwrap()).collect();
+    /// assert_eq!(parts, whole);
+    /// # Ok::<(), rs4dggs::Error>(())
+    /// ```
+    pub fn zones_part(&self, level: u8, part: u64, parts: u64) -> Result<crate::Zones<&Self>> {
+        Ok(crate::Zones::new(
+            self,
+            self.lattice_walk_part(level, part, parts)?,
+        ))
     }
 
     // --- the zones of a level whose extent meets a bounding box ---

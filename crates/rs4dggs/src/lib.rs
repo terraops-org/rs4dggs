@@ -45,6 +45,9 @@ mod lattice_suite;
 #[path = "../tests/zones_in_box.rs"]
 mod zones_in_box_suite;
 #[cfg(test)]
+#[path = "../tests/zones_part.rs"]
+mod zones_part_suite;
+#[cfg(test)]
 #[path = "../tests/zones.rs"]
 mod zones_suite;
 

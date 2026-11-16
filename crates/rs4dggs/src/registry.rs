@@ -455,6 +455,13 @@ impl AnyGrid {
         Ok(crate::Zones::new(*self, walk))
     }
 
+    /// Part `part` of `parts` of [`AnyGrid::zones`], as [`Grid::zones_part`] cuts it on the
+    /// grid this handle names: the parts, in order, are the walk of the level.
+    pub fn zones_part(&self, level: u8, part: u64, parts: u64) -> Result<crate::Zones<AnyGrid>> {
+        let walk = dispatch!(self, g => g.lattice_walk_part(level, part, parts))?;
+        Ok(crate::Zones::new(*self, walk))
+    }
+
     /// The point of the sphere at a point of the plane of the rhombi; see
     /// `Grid::lattice_point`.
     pub(crate) fn lattice_point(&self, x: f64, y: f64) -> Option<(f64, f64)> {

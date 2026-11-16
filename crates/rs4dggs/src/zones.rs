@@ -184,6 +184,11 @@ pub(crate) struct Walk {
     next_pending: usize,
     /// The key of the zone the walk was entered after: only zones of a greater key are yielded.
     floor: Option<u64>,
+    /// The first row of the walk and the row it ends before, each a root and a row (a polar
+    /// root's one cell is its row nought): the whole level from `(0, 0)` to `(ROOTS, 0)`, or a
+    /// part of it ([`Walk::part`]).
+    start: (u8, u64),
+    end: (u8, u64),
 }
 
 impl Walk {
@@ -198,13 +203,47 @@ impl Walk {
             pending: Vec::new(),
             next_pending: 0,
             floor: None,
+            start: (0, 0),
+            end: (ROOTS, 0),
+        }
+    }
+
+    /// Part `part` of `parts` of the walk of the level: the rows of the lattice (the ten rhombi
+    /// of `edge` rows each, then the two polar roots of one row each) cut into `parts` runs of
+    /// as near equal a number of rows as may be, in the walk's order. The parts, in order, are
+    /// the walk, since every zone of the level is hosted by one cell of one row.
+    pub(crate) fn part(level: u8, edge: u64, part: u64, parts: u64) -> Self {
+        let rows = 10 * u128::from(edge) + 2;
+        let place = |k: u64| {
+            let u = (rows * u128::from(k) / u128::from(parts)) as u64;
+            let rhombi = 10 * edge;
+            if u < rhombi {
+                ((u / edge) as u8, u % edge)
+            } else {
+                (10 + (u - rhombi) as u8, 0)
+            }
+        };
+        let (start, end) = (place(part), place(part + 1));
+        Walk {
+            root: start.0,
+            row: start.1,
+            start,
+            end,
+            ..Walk::new(level, edge)
         }
     }
 
     /// Moves the walk to the cell of `place`, a root, a row, a column and a key as
     /// [`Topology::locate`] gives them, so that the next zone is the first whose key exceeds
     /// that key: the zones of that cell that follow, then the cells after it.
+    /// A place before the walk's first row leaves it at that row, with no floor: a part
+    /// entered after a zone of an earlier part is the part from its start.
     fn enter_after(&mut self, (root, row, col, key): (u8, u64, u64, u64)) {
+        if (root, row) < self.start {
+            (self.root, self.row, self.col) = (self.start.0, self.start.1, 0);
+            (self.pending, self.next_pending, self.floor) = (Vec::new(), 0, None);
+            return;
+        }
         self.root = root;
         self.row = row;
         self.col = col;
@@ -226,7 +265,7 @@ impl Walk {
                     return Some(zone);
                 }
             }
-            if self.root >= ROOTS {
+            if self.root >= ROOTS || (self.root, self.row) >= self.end {
                 self.pending = Vec::new();
                 return None;
             }
